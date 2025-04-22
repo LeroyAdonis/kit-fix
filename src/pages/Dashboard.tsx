@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { auth, db } from '@/firebaseConfig';
-import { doc, getDoc, collection, query, where, getDocs, deleteDoc, or } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, deleteDoc } from 'firebase/firestore';
 import { logoutUser } from '@/services/authService';
 import { Button } from '@/components/ui/button';
 import { format } from "date-fns";
@@ -31,31 +31,26 @@ import {
     Truck,
     CreditCard,
     Info,
-    ChevronLeft,
-    ChevronRight,
 } from "lucide-react";
 import OrderImageCarousel from "@/components/OrderImageCarousel";
 import ProgressStepper from "@/components/ProgressStepper";
+import RepairTimeline from '@/components/RepairTimeline';
 
 const Dashboard = () => {
-    const [user, loading, error] = useAuthState(auth);
+    const [user, loading] = useAuthState(auth);
     const [userData, setUserData] = useState<any>(null);
     const [orders, setOrders] = useState<any[]>([]);
     const navigate = useNavigate();
-    const [currentImageIndex, setCurrentImageIndex] = useState<number>(0);
-    const [imageLoaded, setImageLoaded] = useState<boolean>(false);
-
 
     const safeFormatDate = (timestamp: any) => {
         if (timestamp && timestamp.seconds) {
             return format(new Date(timestamp.seconds * 1000), "d MMM yyyy");
         }
-        return 'Unknown'; // Default value when the date is invalid
+        return 'Unknown';
     };
 
     useEffect(() => {
         if (!user && !loading) {
-            // Log user out when session closes
             logoutUser();
         }
     }, [user, loading]);
@@ -76,7 +71,6 @@ const Dashboard = () => {
                 const q = query(collection(db, 'orders'), where('userId', '==', user.uid));
                 const querySnapshot = await getDocs(q);
                 const ordersList = querySnapshot.docs.map(doc => {
-                    console.log("Fetched order:", doc.id, doc.data());
                     return { id: doc.id, ...doc.data() };
                 });
                 setOrders(ordersList);
@@ -125,7 +119,6 @@ const Dashboard = () => {
         }
     };
 
-
     const getCurrentStep = (processing: any) => {
         if (!processing) return 0;
 
@@ -134,18 +127,17 @@ const Dashboard = () => {
         if (deliveryMethod === 'pickup') {
             if (deliveryStatus === 'Delivered') return 3;
             if (pickupStatus === 'Picked up') return 2;
-            return 1; // Waiting for pickup
+            return 1;
         }
 
         if (deliveryMethod === 'dropoff') {
             if (deliveryStatus === 'Delivered') return 3;
             if (dropoffStatus === 'Dropped off') return 2;
-            return 1; // Waiting for dropoff
+            return 1;
         }
 
-        return 0; // Initial state
+        return 0;
     };
-
 
     if (!userData) {
         return (
@@ -224,7 +216,7 @@ const Dashboard = () => {
                                                     <CardContent className="space-y-2 text-sm">
                                                         <div className="flex items-center gap-2 text-muted-foreground">
                                                             <Shirt className="h-4 w-4" />
-                                                            <span>{order.repairType || "Repair"}</span>
+                                                            <span>{order.repairType.slice(0, 10) || "Repair"}</span>
                                                         </div>
                                                         <div className="flex items-center gap-2 text-muted-foreground">
                                                             <CreditCard className="h-4 w-4" />
@@ -242,7 +234,7 @@ const Dashboard = () => {
                                                 </Card>
                                             </DialogTrigger>
 
-                                            <DialogContent>
+                                            <DialogContent className="overflow-y-auto max-h-[80vh] p-4 sm:p-6 md:p-8">
                                                 <DialogHeader>
                                                     <DialogTitle>Order #{`KF${order.id.slice(0, 6).toUpperCase()}`}</DialogTitle>
                                                     <DialogDescription>
@@ -256,7 +248,7 @@ const Dashboard = () => {
                                                 <div className="space-y-2 text-sm">
                                                     <div className="flex items-center gap-2">
                                                         <Shirt className="h-4 w-4 text-muted-foreground" />
-                                                        <strong>Repair Type:</strong> {order.repairType}
+                                                        <strong>Repair Type:</strong> {order.repairType.slice(0, 10) || "Repair"}
                                                     </div>
                                                     <div className="flex items-center gap-2">
                                                         <Truck className="h-4 w-4 text-muted-foreground" />
@@ -279,9 +271,11 @@ const Dashboard = () => {
                                                         <strong>Status:</strong> {order.status || "Processing"}
                                                     </div>
                                                     {order.allImages?.length > 0 && (
-                                                        <OrderImageCarousel images={order.allImages} />
+                                                        <>
+                                                            <OrderImageCarousel images={order.allImages} />
+                                                            <RepairTimeline order={order} />
+                                                        </>
                                                     )}
-
                                                 </div>
 
                                                 {!paid && (
@@ -313,6 +307,4 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
-
-
 

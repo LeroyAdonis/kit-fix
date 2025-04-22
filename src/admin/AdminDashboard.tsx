@@ -7,6 +7,7 @@ import DeliveryManager from "./components/DeliveryManager";
 import DropoffManager from "./components/DropoffManager";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
+import RepairManager from "./components/RepairManager";
 
 const AdminDashboard = () => {
     return (
@@ -23,6 +24,12 @@ const AdminDashboard = () => {
                             className="btn-success rounded-xl px-4 py-2 font-medium bg-lime-green text-white hover:bg-lime-500 transition data-[state=active]:ring-2 data-[state=active]:underline underline-offset-4"
                         >
                             Orders
+                        </TabsTrigger>
+                        <TabsTrigger
+                            value="repairs"
+                            className="btn-info rounded-xl px-4 py-2 font-medium data-[state=active]:underline underline-offset-4"
+                        >
+                            Repairs
                         </TabsTrigger>
                         <TabsTrigger
                             value="pickup"
@@ -49,6 +56,14 @@ const AdminDashboard = () => {
                         <Card className="rounded-xl bg-white shadow-md mb-8">
                             <CardContent className="p-6">
                                 <OrdersTable />
+                            </CardContent>
+                        </Card>
+                    </TabsContent>
+
+                    <TabsContent value="repairs">
+                        <Card className="rounded-xl bg-white shadow-md mb-8">
+                            <CardContent className="p-6">
+                                <RepairManager />
                             </CardContent>
                         </Card>
                     </TabsContent>

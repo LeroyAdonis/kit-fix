@@ -111,6 +111,7 @@ const UploadPhotos = () => {
         setUploading(true);
 
         try {
+            console.log("Uploading images...");
             const downloadURLs = await Promise.all(
                 photos.map(photo => {
                     const uniqueName = `${user?.uid}_${Date.now()}_${photo.name}`;
@@ -152,6 +153,8 @@ const UploadPhotos = () => {
                 throw new Error("No uploaded images found");
             }
 
+            console.log("Creating order...");
+
             const orderRef = await addDoc(collection(db, "orders"), {
                 userId: user?.uid,
                 jerseyImageUrl: downloadURLs[0],
@@ -159,13 +162,42 @@ const UploadPhotos = () => {
                 orderDate: serverTimestamp(),
                 status: "draft",
                 paid: false,
-                stepCompleted: "upload", // you can update this throughout the process
-                notes: "",
+                stepCompleted: "upload",
+
+                repairDetails: {
+                    repairType: "",
+                    notes: "",
+                    priceEstimate: 0,
+                },
+                contactInfo: {
+                    fullName: "",
+                    email: user?.email || "",
+                    phone: "",
+                    address: "",
+                },
+                processing: {
+                    method: "", // 'pickup' or 'dropoff'
+                    pickupDate: null,
+                    dropoffDate: null,
+                    deliveryDate: null,
+                    duration: "",
+                    pickupStatus: "pending",
+                    dropoffStatus: "pending",
+                    deliveryStatus: "pending",
+                },
+                history: {
+                    upload: {
+                        step: "upload",
+                        status: "completed",
+                        timestamp: serverTimestamp(), // ✅ now allowed because it's not in an array
+                    }
+                }
             });
 
 
             toast.success("Photos uploaded and order created!");
             setTimeout(() => {
+                console.log("Navigation to /get-quote...");
                 navigate('/get-quote', {
                     state: {
                         orderId: orderRef.id,

@@ -214,13 +214,14 @@ const GetQuote = () => {
                 repairType: selectedOption,
                 repairDescription: selectedRepairOption.description,
                 price: selectedRepairOption.price,
-                duration: selectedRepairOption.duration,
                 notes: additionalNotes,
-                stepCompleted: "quote"
+                stepCompleted: "quote",
+                processing: {
+                    duration: selectedRepairOption.duration
+                }
             });
 
             setIsLoading(false);
-
 
             toast.success('Quote saved. Proceeding to scheduling.');
 
@@ -236,26 +237,7 @@ const GetQuote = () => {
 
             localStorage.setItem("kitfix-quote-data", JSON.stringify(quoteData));
 
-
-            // if (userId) {
-            //     localStorage.removeItem(`kitfix-${userId}-quote-repairType`);
-            //     localStorage.removeItem(`kitfix-${userId}-quote-notes`);
-            //     localStorage.removeItem(`kitfix-${userId}-quote-photos`);
-            // }
-
             navigate(`/schedule-service?orderId=${orderId}`);
-
-            // navigate('/schedule-service', {
-            //     state: {
-            //         orderId,
-            //         photos,
-            //         selectedOption,
-            //         price: selectedRepairOption.price,
-            //         duration: selectedRepairOption.duration,
-            //         notes: additionalNotes,
-            //         description: selectedRepairOption.description
-            //     }
-            // });
         } catch (error) {
             setIsLoading(false);
             console.error("Error updating order:", error);
@@ -378,4 +360,3 @@ const GetQuote = () => {
 };
 
 export default GetQuote;
-

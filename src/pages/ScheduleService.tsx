@@ -8,18 +8,11 @@ import { db, auth } from "@/firebaseConfig";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import { toast } from "sonner";
-import { set } from "date-fns";
 
 const ScheduleService = () => {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const orderId = searchParams.get("orderId");
-    const userData = JSON.parse(
-        localStorage.getItem(`kitfix-user-${auth.currentUser?.uid}`) || "{}"
-    );
-    const ordersData = JSON.parse(
-        localStorage.getItem(`kitfix-orders-${auth.currentUser?.uid}`) || "[]"
-    );
 
     const scheduleSchema = z.object({
         name: z.string().min(1, "Name is required"),
@@ -28,7 +21,7 @@ const ScheduleService = () => {
         deliveryMethod: z.enum(["pickup", "dropoff"]),
         deliveryAddress: z.string().optional(),
         repairType: z.string().min(1, "Repair type is required"),
-        preferredDate: z.string().min(1, "Preferred date is required")
+        preferredDate: z.string().min(1, "Preferred date is required"),
     });
 
     type ScheduleFormData = z.infer<typeof scheduleSchema>;
@@ -41,15 +34,26 @@ const ScheduleService = () => {
         handleSubmit,
         watch,
         formState: { errors },
-        setValue
+        setValue,
+        getValues,
     } = useForm<ScheduleFormData>({
         resolver: zodResolver(scheduleSchema),
         defaultValues: {
-            deliveryMethod: "pickup"
-        }
+            deliveryMethod: "pickup",
+        },
     });
 
     const deliveryMethod = watch("deliveryMethod");
+
+    // 🧠 Auto-save to localStorage when form changes
+    useEffect(() => {
+        const subscription = watch((value) => {
+            if (!orderId) {
+                localStorage.setItem("kitfix-schedule-data", JSON.stringify(value));
+            }
+        });
+        return () => subscription.unsubscribe();
+    }, [watch, orderId]);
 
     useEffect(() => {
         const fetchData = async () => {
@@ -63,20 +67,19 @@ const ScheduleService = () => {
                         setInitialData({ ...data, orderId });
                         const contact = data.contactInfo || {};
                         const processing = data.processing || {};
-                        console.log(orderId);
+
                         setValue("name", contact.name || "");
                         setValue("email", contact.email || "");
                         setValue("phone", contact.phone || "");
                         setValue(
                             "repairType" as keyof ScheduleFormData,
-                            data.repairType + " - " + data.repairDescription || ""
+                            data.repairDescription
+                                ? `${data.repairType} - ${data.repairDescription}`
+                                : data.repairType
                         );
                         setValue("deliveryMethod", processing.deliveryMethod || "pickup");
                         setValue("deliveryAddress", processing.deliveryAddress || "");
-                        setValue(
-                            "preferredDate",
-                            processing.deliveryDate?.split("T")[0] || ""
-                        );
+                        setValue("preferredDate", processing.deliveryDate?.split("T")[0] || "");
                     } else {
                         toast.error("Order not found. Please restart the repair process.");
                         navigate("/dashboard");
@@ -86,13 +89,14 @@ const ScheduleService = () => {
                     toast.error("Failed to load order. Please try again.");
                 }
             } else {
-                const saved = localStorage.getItem("kitfix-quote-data");
+                const saved = localStorage.getItem("kitfix-schedule-data");
                 if (saved) {
                     const data = JSON.parse(saved);
                     setInitialData(data);
                     setValue("name", data?.name || "");
                     setValue("email", data?.email || "");
                     setValue("phone", data?.phone || "");
+                    setValue("repairType", data?.repairType || "");
                     setValue("deliveryMethod", data?.deliveryMethod || "pickup");
                     setValue("deliveryAddress", data?.deliveryAddress || "");
                     setValue("preferredDate", data?.preferredDate || "");
@@ -130,14 +134,22 @@ const ScheduleService = () => {
                     deliveryMethod: formData.deliveryMethod,
                     deliveryAddress: isPickup ? formData.deliveryAddress : "",
                     deliveryDate: isPickup ? formData.preferredDate : null,
-                    preferredDate: formData.preferredDate, // always save this
+                    preferredDate: formData.preferredDate,
                     dropoffDate: !isPickup ? new Date().toISOString() : null,
                     pickupStatus: isPickup ? "pending" : null,
                     dropoffStatus: !isPickup ? "received" : null,
                     deliveryStatus: isPickup ? "scheduled" : null,
                 },
+                repairTimestamps: {
+                    scheduledAt: new Date().toISOString(),
+                },
+                repairProgress: {
+                    status: "pending",
+                    startedAt: new Date().toISOString(),
+                    completedAt: null,
+                },
                 repairType: formData.repairType,
-                status: "in-progress",
+                repairStatus: "pending",
                 stepCompleted: "schedule",
             };
 
@@ -160,7 +172,6 @@ const ScheduleService = () => {
         }
     };
 
-
     if (loading) return <p>Loading...</p>;
 
     return (
@@ -173,58 +184,31 @@ const ScheduleService = () => {
                         <form onSubmit={handleSubmit(onSubmit)} className='space-y-4'>
                             <div>
                                 <label className='block font-medium'>Full Name</label>
-                                <input
-                                    {...register("name")}
-                                    className='w-full border p-2 rounded'
-                                />
-                                {errors.name && (
-                                    <p className='text-red-500'>{errors.name.message}</p>
-                                )}
+                                <input {...register("name")} className='w-full border p-2 rounded' />
+                                {errors.name && <p className='text-red-500'>{errors.name.message}</p>}
                             </div>
 
                             <div>
                                 <label className='block font-medium'>Email</label>
-                                <input
-                                    type='email'
-                                    {...register("email")}
-                                    className='w-full border p-2 rounded'
-                                />
-                                {errors.email && (
-                                    <p className='text-red-500'>{errors.email.message}</p>
-                                )}
+                                <input type='email' {...register("email")} className='w-full border p-2 rounded' />
+                                {errors.email && <p className='text-red-500'>{errors.email.message}</p>}
                             </div>
 
                             <div>
                                 <label className='block font-medium'>Phone</label>
-                                <input
-                                    type='tel'
-                                    {...register("phone")}
-                                    className='w-full border p-2 rounded'
-                                />
-                                {errors.phone && (
-                                    <p className='text-red-500'>{errors.phone.message}</p>
-                                )}
+                                <input type='tel' {...register("phone")} className='w-full border p-2 rounded' />
+                                {errors.phone && <p className='text-red-500'>{errors.phone.message}</p>}
                             </div>
 
                             <div>
                                 <label className='block font-medium'>Repair Type</label>
-                                <input
-                                    type='repairType'
-                                    {...register("repairType")}
-                                    className='w-full border p-2 rounded'
-                                />
-                                {errors.repairType && (
-                                    <p className='text-red-500'>{errors.repairType.message}</p>
-                                )}
-
+                                <input type='text' {...register("repairType")} className='w-full border p-2 rounded' />
+                                {errors.repairType && <p className='text-red-500'>{errors.repairType.message}</p>}
                             </div>
 
                             <div>
                                 <label className='block font-medium'>Delivery Method</label>
-                                <select
-                                    {...register("deliveryMethod")}
-                                    className='w-full border p-2 rounded'
-                                >
+                                <select {...register("deliveryMethod")} className='w-full border p-2 rounded'>
                                     <option value='pickup'>Pickup</option>
                                     <option value='dropoff'>Dropoff</option>
                                 </select>
@@ -233,20 +217,13 @@ const ScheduleService = () => {
                             {deliveryMethod === "pickup" && (
                                 <div>
                                     <label className='block font-medium'>Pickup Address</label>
-                                    <input
-                                        {...register("deliveryAddress")}
-                                        className='w-full border p-2 rounded'
-                                    />
+                                    <input {...register("deliveryAddress")} className='w-full border p-2 rounded' />
                                 </div>
                             )}
 
                             <div>
                                 <label className='block font-medium'>Preferred Date</label>
-                                <input
-                                    type='date'
-                                    {...register("preferredDate")}
-                                    className='w-full border p-2 rounded'
-                                />
+                                <input type='date' {...register("preferredDate")} className='w-full border p-2 rounded' />
                                 {errors.preferredDate && (
                                     <p className='text-red-500'>{errors.preferredDate.message}</p>
                                 )}

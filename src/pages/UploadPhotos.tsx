@@ -1,34 +1,47 @@
-import React, { useState } from 'react';
+// src/pages/UploadPhotos.tsx
+import React, { useState, useEffect } from 'react'; // Import useEffect
 import { useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+// Use sonner toast
 import { toast } from 'sonner';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
-import { Camera, Upload, X } from 'lucide-react';
+import { Camera, Upload, X, Loader2 } from 'lucide-react'; // Import Loader2
 import { getStorage, ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import firebaseConfig from '@/firebaseConfig';
 import { getFirestore, collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "@/firebaseConfig";
-import { useOrderContext } from "@/contexts/OrderContext";
+// import { useOrderContext } from "@/contexts/OrderContext"; // Remove if not used
+
+// Import Order type and relevant statuses
+import { Order, OrderStatus, RepairStatus, PaymentStatus } from '@/types/order';
 
 
 const storage = getStorage(firebaseConfig);
+const db = getFirestore(firebaseConfig); // Use db from firebaseConfig directly if exported
+
+
+/**
+ * Page for uploading photos of a jersey for repair.
+ *
+ * Creates a new order document in Firestore with uploaded photo URLs and
+ * initializes essential fields for the order processing workflow.
+ */
 
 const UploadPhotos = () => {
-    useOrderContext();
+    // useOrderContext(); // Remove if not used
 
     const navigate = useNavigate();
     const [photos, setPhotos] = useState<File[]>([]);
     const [previews, setPreviews] = useState<string[]>([]);
     const [isDragging, setIsDragging] = useState(false);
     const [uploadProgress, setUploadProgress] = useState<number>(0);
-    const [uploading, setUploading] = useState(false);
-    const db = getFirestore(firebaseConfig);
-    const [user] = useAuthState(auth);
+    const [uploading, setUploading] = useState(false); // State for upload and order creation
+    const [user, loadingUser, errorUser] = useAuthState(auth); // Use useAuthState hook
 
-    // Handle file input change
+    // --- Handle file input change ---
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
             const newFiles = Array.from(e.target.files);
@@ -36,7 +49,7 @@ const UploadPhotos = () => {
         }
     };
 
-    // Add photos to state
+    // --- Add photos to state ---
     const addPhotos = (files: File[]) => {
         // Only accept image files
         const imageFiles = files.filter(file => file.type.startsWith('image/'));
@@ -47,20 +60,28 @@ const UploadPhotos = () => {
         }
 
         if (photos.length + imageFiles.length > 5) {
-            toast.error('You can upload a maximum of 5 photos');
-            return;
+            toast.warning(`You can upload a maximum of 5 photos. ${5 - photos.length} slots remaining.`);
+            // Optionally truncate the array if more than 5 were selected at once
+            const allowedFiles = imageFiles.slice(0, 5 - photos.length);
+            const newPreviews = allowedFiles.map(file => URL.createObjectURL(file));
+            setPhotos([...photos, ...allowedFiles]);
+            setPreviews([...previews, ...newPreviews]);
+            if (imageFiles.length > allowedFiles.length) {
+                toast.info(`Added ${allowedFiles.length} photos. Skipped ${imageFiles.length - allowedFiles.length} due to the 5 photo limit.`);
+            } else {
+                toast.success(`${allowedFiles.length} photo${allowedFiles.length > 1 ? 's' : ''} added`);
+            }
+
+        } else {
+            // Create preview URLs
+            const newPreviews = imageFiles.map(file => URL.createObjectURL(file));
+            setPhotos([...photos, ...imageFiles]);
+            setPreviews([...previews, ...newPreviews]);
+            toast.success(`${imageFiles.length} photo${imageFiles.length > 1 ? 's' : ''} added`);
         }
-
-        // Create preview URLs
-        const newPreviews = imageFiles.map(file => URL.createObjectURL(file));
-
-        setPhotos([...photos, ...imageFiles]);
-        setPreviews([...previews, ...newPreviews]);
-
-        toast.success(`${imageFiles.length} photo${imageFiles.length > 1 ? 's' : ''} added`);
     };
 
-    // Remove photo from state
+    // --- Remove photo from state ---
     const removePhoto = (index: number) => {
         // Revoke the object URL to avoid memory leaks
         URL.revokeObjectURL(previews[index]);
@@ -73,13 +94,13 @@ const UploadPhotos = () => {
 
         setPhotos(newPhotos);
         setPreviews(newPreviews);
+        toast.info('Photo removed');
     };
 
-    // Handle drag events
+    // --- Handle drag events ---
     const handleDrag = (e: React.DragEvent) => {
         e.preventDefault();
         e.stopPropagation();
-
         if (e.type === 'dragenter' || e.type === 'dragover') {
             setIsDragging(true);
         } else if (e.type === 'dragleave') {
@@ -87,7 +108,7 @@ const UploadPhotos = () => {
         }
     };
 
-    // Handle drop event
+    // --- Handle drop event ---
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
         e.stopPropagation();
@@ -99,7 +120,15 @@ const UploadPhotos = () => {
         }
     };
 
-    // Handle form submission
+    // Clean up object URLs when component unmounts or previews change
+    useEffect(() => {
+        return () => {
+            previews.forEach(preview => URL.revokeObjectURL(preview));
+        };
+    }, [previews]);
+
+
+    // --- Handle form submission (Upload and Create Order) ---
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
@@ -108,13 +137,22 @@ const UploadPhotos = () => {
             return;
         }
 
-        setUploading(true);
+        if (!user) {
+            toast.error("You must be logged in to create an order.");
+            // Optionally redirect to login
+            // navigate('/login');
+            return;
+        }
+
+        setUploading(true); // Start uploading state
+        setUploadProgress(0); // Reset progress
 
         try {
             console.log("Uploading images...");
             const downloadURLs = await Promise.all(
                 photos.map(photo => {
-                    const uniqueName = `${user?.uid}_${Date.now()}_${photo.name}`;
+                    // Create a storage reference with a unique name including user ID and timestamp
+                    const uniqueName = `${user.uid}_${Date.now()}_${photo.name.replace(/\s+/g, '_')}`; // Replace spaces
                     const storageRef = ref(storage, `jerseys/${uniqueName}`);
                     const uploadTask = uploadBytesResumable(storageRef, photo);
 
@@ -122,18 +160,30 @@ const UploadPhotos = () => {
                         uploadTask.on(
                             'state_changed',
                             (snapshot) => {
+                                // Update progress (can be tricky with Promise.all for total progress)
+                                // For simplicity, maybe just show a general loading or progress for the first file
                                 const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                                setUploadProgress(progress);
+                                // If you want overall progress, you'd need to track bytes across all uploads
+                                // For now, let's update a general progress indicator
+                                setUploadProgress(prev => {
+                                    // Simple average or just use the last file's progress
+                                    return prev + (progress - prev) / photos.length; // Very basic average approximation
+                                });
                             },
                             (error) => {
-                                reject(error);
+                                console.error("Upload error for", photo.name, error);
+                                toast.error(`Failed to upload ${photo.name}.`);
+                                reject(error); // Reject the promise on error
                             },
                             async () => {
                                 try {
                                     const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-                                    resolve(downloadURL);
+                                    console.log("Uploaded", photo.name, "->", downloadURL);
+                                    resolve(downloadURL); // Resolve with the download URL
                                 } catch (error) {
-                                    reject(error);
+                                    console.error("Error getting download URL for", photo.name, error);
+                                    toast.error(`Failed to get URL for ${photo.name}.`);
+                                    reject(error); // Reject the promise on error
                                 }
                             }
                         );
@@ -141,79 +191,126 @@ const UploadPhotos = () => {
                 })
             );
 
-            // ✅ Then proceed with Firestore order creation
-            console.log("Current user UID:", user?.uid);
-            console.log("Download URLs:", downloadURLs);
+            console.log("All images uploaded. Download URLs:", downloadURLs);
 
-            if (!user?.uid) {
-                throw new Error("User not logged in");
+            if (!downloadURLs || downloadURLs.length === 0 || downloadURLs.some(url => !url)) {
+                throw new Error("Failed to get download URLs for all images.");
             }
 
-            if (!downloadURLs || downloadURLs.length === 0) {
-                throw new Error("No uploaded images found");
-            }
 
-            console.log("Creating order...");
+            console.log("Creating initial order document in Firestore...");
 
-            const orderRef = await addDoc(collection(db, "orders"), {
-                userId: user?.uid,
-                jerseyImageUrl: downloadURLs[0],
-                allImages: downloadURLs,
-                orderDate: serverTimestamp(),
-                status: "draft",
-                paid: false,
-                stepCompleted: "upload",
+            // --- Create the initial order document aligning with the Order type ---
+            const newOrder: Omit<Order, 'id'> = { // Omit 'id' as addDoc generates it
+                userId: user.uid, // User ID from auth state
 
-                repairDetails: {
-                    repairType: "",
-                    notes: "",
-                    priceEstimate: 0,
-                },
-                contactInfo: {
-                    fullName: "",
-                    email: user?.email || "",
+                contactInfo: { // Initialize contact info - will be filled later
+                    name: "",
+                    email: user.email || "", // Pre-fill email if available
                     phone: "",
                     address: "",
                 },
-                processing: {
-                    method: "", // 'pickup' or 'dropoff'
-                    pickupDate: null,
-                    dropoffDate: null,
-                    deliveryDate: null,
-                    duration: "",
-                    pickupStatus: "pending",
-                    dropoffStatus: "pending",
-                    deliveryStatus: "pending",
+
+                repairType: "", // Will be set in GetQuote
+                repairDescription: "", // Will be set in GetQuote
+                price: 0, // Will be set in GetQuote
+                notes: "", // Will be set in GetQuote
+
+                photos: downloadURLs, // Save all download URLs here
+
+                processing: { // Initialize processing fields
+                    status: "pending" as OrderStatus, // <-- Initial status for OrdersTable
+                    repairStatus: "Pending Routing" as RepairStatus, // <-- Initial status before admin routes
+
+                    deliveryMethod: "" as DeliveryMethod, // Will be set in ScheduleService
+                    duration: "", // Will be set in GetQuote
+                    preferredDate: "", // Will be set in ScheduleService
+
+                    // Do NOT initialize method-specific statuses here.
+                    // They should be set in ScheduleService based on the chosen method.
+                    // pickupStatus: undefined,
+                    // dropoffStatus: undefined,
+                    // deliveryStatus: undefined,
+
+                    // Location/date fields also initialized later
+                    // scheduledDropoffDate: undefined,
+                    // actualDropoffDate: undefined,
+                    // scheduledPickupDate: undefined,
+                    // actualPickupDate: undefined,
+                    // scheduledDeliveryDate: undefined,
+                    // actualDeliveryDate: undefined,
+                    // dropoffLocation: undefined,
+                    // pickupLocation: undefined,
+                    // deliveryAddress: undefined, // Redundant with contactInfo.address
                 },
-                history: {
-                    upload: {
-                        step: "upload",
-                        status: "completed",
-                        timestamp: serverTimestamp(), // ✅ now allowed because it's not in an array
-                    }
-                }
-            });
 
+                payment: { // Initialize payment fields
+                    amount: 0, // Set price in GetQuote
+                    status: "unpaid" as PaymentStatus, // Initially unpaid
+                    method: null,
+                    reference: null,
+                    paidAt: null,
+                },
 
-            toast.success("Photos uploaded and order created!");
-            setTimeout(() => {
-                console.log("Navigation to /get-quote...");
-                navigate('/get-quote', {
-                    state: {
-                        orderId: orderRef.id,
-                        photos: downloadURLs,
-                        orderDate: serverTimestamp(),
-                    },
-                });
-            }, 100);
+                // Remove redundant top-level status and paid fields
+
+                createdAt: serverTimestamp(), // Set creation timestamp
+                updatedAt: serverTimestamp(), // Set initial update timestamp
+
+                // Remove history object for now if not strictly needed in this structure
+                // history: {} // Remove if not used or structure differently
+            };
+
+            // Use addDoc to create the document with an auto-generated ID
+            const orderRef = await addDoc(collection(db, "orders"), newOrder);
+
+            console.log("Order document created with ID:", orderRef.id);
+
+            toast.success("Photos uploaded and initial order created!");
+
+            // Clean up local preview URLs
+            previews.forEach(preview => URL.revokeObjectURL(preview));
+            setPhotos([]); // Clear local photo state
+            setPreviews([]);
+
+            // Navigate to the next step, passing the new order ID via URL params
+            navigate(`/get-quote?orderId=${orderRef.id}`);
 
         } catch (error) {
-            console.error("Upload error:", error);
-            toast.error("Failed to upload or create order. Please try again.");
+            console.error("Upload/Order Creation Error:", error);
+            // Check if the error is a FirebaseError
+            if (errorUser) { // Error from useAuthState
+                toast.error("Authentication error: Please log in.", { description: errorUser.message });
+            } else if (error instanceof Error) { // General JS error or our custom error
+                toast.error("Order creation failed", { description: error.message });
+            } else { // Unknown error type
+                toast.error("An unexpected error occurred.");
+            }
+
         } finally {
-            setUploading(false);
+            setUploading(false); // Ensure uploading state is off
+            setUploadProgress(0); // Reset progress display
         }
     };
+
+    // Show loading state while checking user auth
+    if (loadingUser) {
+        return (
+            <div className="min-h-screen flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-electric-blue"></div>
+            </div>
+        );
+    }
+
+    // Show error if user auth failed
+    if (errorUser) {
+        return (
+            <div className="min-h-screen flex items-center justify-center text-red-600">
+                Error loading user: {errorUser.message}
+            </div>
+        );
+    }
+
 
     return (
         <div className="min-h-screen flex flex-col">
@@ -241,30 +338,34 @@ const UploadPhotos = () => {
 
                                 <div className="flex justify-center">
                                     <div className="relative">
-                                        <Input
-                                            id="photo-upload"
-                                            type="file"
-                                            accept="image/*"
-                                            multiple
-                                            className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
-                                            onChange={handleFileChange}
-                                        />
-                                        <Button type="button" variant="outline">
+                                        {/* Disable input if max photos reached */}
+                                        {photos.length < 5 && (
+                                            <Input
+                                                id="photo-upload"
+                                                type="file"
+                                                accept="image/*"
+                                                multiple
+                                                className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                                                onChange={handleFileChange}
+                                                disabled={uploading} // Disable during upload
+                                            />
+                                        )}
+                                        <Button type="button" variant="outline" disabled={photos.length >= 5 || uploading}>
                                             <Upload className="mr-2 h-4 w-4" />
-                                            Browse Files
+                                            {photos.length >= 5 ? 'Max Photos Reached' : 'Browse Files'}
                                         </Button>
                                     </div>
                                 </div>
 
                                 <p className="text-sm text-gray-500 mt-4">
-                                    Upload up to 5 JPG or PNG images (max 5MB each)
+                                    Upload up to 5 JPG or PNG images
                                 </p>
                             </div>
 
                             {previews.length > 0 && (
                                 <div className="space-y-4">
                                     <h3 className="heading-sm">Uploaded Photos ({previews.length}/5)</h3>
-                                    <div className={`grid grid-cols-2 md:grid-cols-3 gap-4 ${previews.length > 3 ? 'overflow-x-auto' : ''}`}>
+                                    <div className={`grid grid-cols-2 md:grid-cols-3 gap-4 ${previews.length > 3 ? 'overflow-x-auto' : ''}`}> {/* Added overflow class */}
                                         {previews.map((preview, index) => (
                                             <div key={index} className="relative">
                                                 <img
@@ -276,6 +377,7 @@ const UploadPhotos = () => {
                                                     type="button"
                                                     className="absolute top-2 right-2 bg-white rounded-full p-1 shadow-md"
                                                     onClick={() => removePhoto(index)}
+                                                    disabled={uploading} // Disable removal during upload
                                                 >
                                                     <X className="h-4 w-4 text-red-500" />
                                                 </button>
@@ -286,11 +388,16 @@ const UploadPhotos = () => {
                             )}
 
                             <div className="flex justify-between">
-                                <Button type="button" variant="outline" onClick={() => navigate('/')}>
+                                <Button type="button" variant="outline" onClick={() => navigate('/')} disabled={uploading}>
                                     Back to Home
                                 </Button>
                                 <Button type="submit" disabled={photos.length === 0 || uploading}>
-                                    {uploading ? `Uploading... ${uploadProgress.toFixed(2)}%` : 'Continue to Get Quote'}
+                                    {uploading ? (
+                                        <div className="flex items-center">
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                            Uploading... {uploadProgress > 0 ? `${uploadProgress.toFixed(0)}%` : ''} {/* Show progress if > 0 */}
+                                        </div>
+                                    ) : 'Continue to Get Quote'}
                                 </Button>
                             </div>
                         </form>
@@ -303,4 +410,3 @@ const UploadPhotos = () => {
 };
 
 export default UploadPhotos;
-

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Menu, X } from 'lucide-react';
+import { Menu, Shirt, X } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "@/firebaseConfig";
@@ -67,6 +67,7 @@ const Header = () => {
     <header className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${scrolled ? 'py-2 bg-pure-white shadow-md' : 'py-4 bg-pure-white'}`}>
       <div className="container-custom flex items-center justify-between">
         <Link to="/" className="flex items-center">
+          <Shirt className="h-5 w-5 fill-blue-500 stroke-blue-500" />
           <span className="text-2xl font-bold text-electric-blue">KitFix</span>
         </Link>
 

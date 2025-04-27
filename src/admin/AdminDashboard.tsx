@@ -9,6 +9,15 @@ import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import RepairManager from "./components/RepairManager";
 
+/**
+ * AdminDashboard is a React component responsible for rendering the admin
+ * dashboard. It includes a top-level navigation bar with links to the
+ * different sections of the dashboard, which are rendered as separate
+ * components. The component does not handle state or side effects itself,
+ * but rather delegates the logic to its sub-components.
+ *
+ * @returns {JSX.Element} The rendered component.
+ */
 const AdminDashboard = () => {
     return (
         <div className="min-h-screen flex flex-col bg-gray-50 mt-15">

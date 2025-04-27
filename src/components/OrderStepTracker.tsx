@@ -5,8 +5,16 @@ interface OrderStepTrackerProps {
     order: any;
 }
 
+/**
+ * A component that displays a tracker for the current status of an order.
+ *
+ * @param {OrderStepTrackerProps} props
+ * @prop {Order} order - The order to display the tracker for
+ *
+ * @returns {React.ReactElement}
+ */
 const OrderStepTracker: React.FC<OrderStepTrackerProps> = ({ order }) => {
-    const { processing = {}, repairDetails = {} } = order;
+    const { processing = {}, status = {} } = order;
 
     const isPickup = processing.deliveryMethod === "pickup";
     const isDropoff = processing.deliveryMethod === "dropoff";
@@ -21,7 +29,7 @@ const OrderStepTracker: React.FC<OrderStepTrackerProps> = ({ order }) => {
         },
         {
             title: "In Repair",
-            completed: repairDetails.status === "in_progress" || repairDetails.status === "complete",
+            completed: processing.status === "in_progress" || processing.status === "complete",
             icon: <PackageCheck className="w-5 h-5" />,
         },
         {

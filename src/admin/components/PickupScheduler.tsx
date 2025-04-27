@@ -1,201 +1,427 @@
+// src/admin/components/PickupScheduler.tsx
 import React, { useEffect, useState } from "react";
 import {
     collection,
     getDocs,
-    updateDoc,
+    query,
+    where,
+    orderBy,
     doc,
+    updateDoc,
+    serverTimestamp,
     Timestamp,
+    getDoc,
 } from "firebase/firestore";
 import { db } from "@/firebaseConfig";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { format } from "date-fns";
-import { toast } from "sonner";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import StatusFilter from "./StatusFilter";
+import { Input } from "@/components/ui/input"; // For search
+import {
+    Hash,
+    Truck, // Method icon
+    User, // Name icon
+    MapPin, // Location icon
+    CalendarDays, // Date icon
+    DollarSign, // Price icon
+    CreditCard, // Payment icon
+    Search, // Search icon
+    Loader2, // Loading spinner
+    Clock, // Status icon
+    CheckCircle, // Picked icon
+    Package,
+    Tag
+} from "lucide-react";
+import { toast } from 'sonner';
 
-type Order = {
-    id: string;
-    contactInfo?: {
-        name: string;
-        email: string;
-        phone: string;
-    };
-    processing: {
-        deliveryMethod: string;
-        pickupDate?: string;
-        pickupStatus?: string;
-    };
-};
+// Import types
+import { Order, OrderStatus, DeliveryMethod, PickupStatus, PaymentStatus } from "@/types/order";
 
-const PickupScheduler = () => {
+// Define filter status options for Pickup Scheduler
+const pickupFlowStatuses: PickupStatus[] = [
+    "awaiting_pickup", // Initial status set by customer flow or RepairManager? Let's assume RepairManager sets Ready for Pickup repairStatus and 'awaiting_pickup' pickupStatus
+    "scheduled",
+    "picked",
+];
+type PickupFilterStatus = PickupStatus | 'all';
+
+
+const PickupScheduler: React.FC = () => {
     const [orders, setOrders] = useState<Order[]>([]);
     const [loading, setLoading] = useState(true);
-    const [selectedStatus, setSelectedStatus] = useState<string>("all");
+    const [filterStatus, setFilterStatus] = useState<PickupFilterStatus>('awaiting_pickup'); // Default filter
+    const [searchTerm, setSearchTerm] = useState(''); // State for search term
+    const [isUpdatingOrderId, setIsUpdatingOrderId] = useState<string | null>(null);
+
+    // Pickup statuses available for filtering
+    const statusOptions: PickupFilterStatus[] = ['all', ...pickupFlowStatuses];
 
     useEffect(() => {
-        const fetchPickupOrders = async () => {
+        const fetchOrders = async () => {
+            setLoading(true);
             try {
-                const snapshot = await getDocs(collection(db, "orders"));
-                const pickupOrders = snapshot.docs
-                    .map((doc) => ({ id: doc.id, ...doc.data() } as Order))
-                    .filter(
-                        (order) =>
-                            order.processing?.deliveryMethod === "pickup" &&
-                            order.processing?.pickupStatus !== "picked"
-                    );
+                const ordersRef = collection(db, "orders");
 
-                setOrders(pickupOrders);
-                setLoading(false);
+                // Query for orders that are 'awaiting_fulfillment' and have deliveryMethod 'pickup'
+                // AND have a pickupStatus relevant to this flow (optional filter).
+                // We can filter by deliveryMethod and main status, then client-filter by pickupStatus and repairStatus.
+                let q = query(
+                    ordersRef,
+                    where('processing.status', '==', 'awaiting_fulfillment' as OrderStatus),
+                    where('processing.deliveryMethod', '==', 'pickup' as DeliveryMethod),
+                    orderBy("createdAt", "desc") // Order by creation date
+                );
+
+                const snapshot = await getDocs(q);
+                const fetchedOrders = snapshot.docs.map((d) => {
+                    const data = d.data();
+                    return {
+                        id: d.id,
+                        ...data,
+                        contactInfo: data.contactInfo || {},
+                        processing: data.processing || {},
+                        payment: data.payment || {},
+                    };
+                }) as Order[];
+
+                // Client-side filter to ensure they are in the correct repair status (Ready for Pickup)
+                // and have a pickup status relevant to this manager's view.
+                const relevantOrders = fetchedOrders.filter(order =>
+                    order.processing?.repairStatus === 'Ready for Pickup' && // Must be explicitly ready for pickup
+                    order.processing?.pickupStatus && pickupFlowStatuses.includes(order.processing.pickupStatus) // Must have a relevant pickup status
+                );
+
+                setOrders(relevantOrders); // Set the state with relevant orders
+
             } catch (error) {
                 console.error("Error fetching pickup orders:", error);
+                toast.error("Error fetching pickup orders", {
+                    description: "Could not load orders for Pickup Scheduler.",
+                });
+            } finally {
+                setLoading(false);
             }
         };
 
-        fetchPickupOrders();
-    }, []);
+        // Fetch orders whenever the component mounts or db changes.
+        fetchOrders();
+    }, [db]); // Dependency array - filter/search are client-side
 
-    const updatePickup = async (
-        orderId: string,
-        field: string,
-        value: string
-    ) => {
+
+    // Generic update function for pickup orders
+    const updatePickupOrder = async (orderId: string, updates: Partial<Order>): Promise<boolean> => {
+        setIsUpdatingOrderId(orderId);
         try {
             const orderRef = doc(db, "orders", orderId);
-            await updateDoc(orderRef, {
-                [`processing.${field}`]: value,
-            });
+            const orderSnap = await getDoc(orderRef);
+            const existingOrder = orderSnap.exists() ? orderSnap.data() as Order : null;
+
+            if (!existingOrder) {
+                console.error("Error: Order not found for pickup update:", orderId);
+                toast.error("Update Failed", { description: "Order not found." });
+                return false;
+            }
+
+            const updatedProcessing = updates.processing
+                ? { ...existingOrder.processing, ...updates.processing }
+                : existingOrder.processing;
+
+            const finalUpdates: Partial<Order> = {
+                ...updates,
+                processing: updatedProcessing,
+                updatedAt: serverTimestamp(),
+            };
+
+            await updateDoc(orderRef, finalUpdates);
+
+            // Optimistically update local state
+            const updatedOrder = { ...existingOrder, ...finalUpdates };
+            if (finalUpdates.processing) updatedOrder.processing = { ...existingOrder.processing, ...finalUpdates.processing };
+            if (finalUpdates.payment) updatedOrder.payment = { ...existingOrder.payment, ...finalUpdates.payment };
+
 
             setOrders((prev) =>
-                prev.map((order) =>
-                    order.id === orderId
-                        ? {
-                            ...order,
-                            processing: {
-                                ...order.processing,
-                                [field]: value,
-                                deliveryStatus: value === "picked" ? "scheduled" : order.processing.deliveryStatus,
-                            },
-                        }
-                        : order
-                )
+                prev.map((o) => (o && o.id === orderId ? updatedOrder : o)) // Check for 'o' safety
             );
 
-
-            if (field === "pickupStatus") {
-                const name =
-                    orders.find((order) => order.id === orderId)?.contactInfo?.name ||
-                    "Customer";
-                if (value === "scheduled") {
-                    toast.success(`Pickup scheduled for ${name}`);
-                } else if (value === "picked") {
-                    await updateDoc(orderRef, {
-                        [`processing.${field}`]: value,
-                        "processing.deliveryStatus": "scheduled", // 👈 Add this line
-                    });
-                    toast.success(`Jersey picked up for ${name}. Sent to Delivery Manager.`);
-                }
-
-            }
+            return true;
         } catch (error) {
-            console.error("Error updating pickup info:", error);
+            console.error("Error updating pickup order:", error);
+            toast.error("Update Failed", {
+                description: `Could not update order ${orderId.slice(0, 6).toUpperCase()}.`,
+            });
+            return false;
+        } finally {
+            setIsUpdatingOrderId(null);
         }
     };
 
-    const filteredOrders =
-        selectedStatus === "all"
-            ? orders
-            : orders.filter(
-                (order) => order.processing?.pickupStatus === selectedStatus
-            );
+    // Action: Mark order as Scheduled for Pickup (Optional, maybe just update date)
+    const markAsScheduled = async (order: Order, scheduleDate: string) => {
+        if (!order || !order.id || !order.processing) {
+            toast.error("Action Failed", { description: "Order data is incomplete." });
+            return;
+        }
+        if (order.processing.pickupStatus !== 'awaiting_pickup') {
+            toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not awaiting scheduling.`);
+            return;
+        }
+        if (!scheduleDate) {
+            toast.warning("Please provide a schedule date.");
+            return;
+        }
+
+        // Convert date string to Timestamp (at the beginning of the day)
+        const date = new Date(scheduleDate);
+        if (isNaN(date.getTime())) {
+            toast.error("Invalid date selected.");
+            return;
+        }
+        const scheduledTimestamp = Timestamp.fromDate(date);
+
+
+        const updates: Partial<Order> = {
+            processing: {
+                ...order.processing,
+                pickupStatus: "scheduled" as PickupStatus,
+                scheduledPickupDate: scheduledTimestamp, // Save scheduled date as Timestamp
+            },
+        };
+        const success = await updatePickupOrder(order.id, updates);
+        if (success) toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} marked as Scheduled.`);
+    };
+
+
+    // Action: Mark order as Picked Up
+    const markAsPickedUp = async (order: Order) => {
+        if (!order || !order.id || !order.processing) {
+            toast.error("Action Failed", { description: "Order data is incomplete." });
+            return;
+        }
+        if (order.processing.pickupStatus !== 'awaiting_pickup' && order.processing.pickupStatus !== 'scheduled') {
+            toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not ready to be marked as picked up.`);
+            return;
+        }
+
+        const updates: Partial<Order> = {
+            processing: {
+                ...order.processing,
+                status: "fulfilled" as OrderStatus, // CHANGE main status to fulfilled
+                pickupStatus: "picked" as PickupStatus, // Set final pickup status
+                actualPickupDate: Timestamp.now(), // Record actual pickup time
+            },
+            // Maybe clear fulfillment specific statuses/timestamps here?
+            // readyForFulfillmentAt: null // Set to null to remove or clear
+        };
+        const success = await updatePickupOrder(order.id, updates);
+        if (success) toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} marked as Picked Up and Fulfilled.`);
+    };
+
+
+    // --- Client-side Filtering and Searching ---
+    const filteredAndSearchedOrders = orders.filter(order => {
+        // Add safety check for processing and pickupStatus
+        if (!order.processing || !order.processing.pickupStatus) return false;
+
+        // 1. Filter by Status
+        const statusMatch = filterStatus === 'all' || order.processing.pickupStatus === filterStatus;
+
+        if (!statusMatch) return false;
+
+        // 2. Filter by Search Term
+        const lowerSearchTerm = searchTerm.toLowerCase();
+        if (lowerSearchTerm === '') return true;
+
+        const customerName = order.contactInfo?.name?.toLowerCase() || '';
+        const orderIdPartial = order.id.slice(0, 6).toLowerCase();
+
+        return customerName.includes(lowerSearchTerm) || orderIdPartial.includes(lowerSearchTerm);
+    });
+
 
     if (loading) {
         return (
-            <div className="space-y-2">
-                {[...Array(5)].map((_, i) => (
-                    <Skeleton key={i} className="h-12 w-full rounded-md" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                {[...Array(6)].map((_, i) => (
+                    <Skeleton key={i} className="h-44 w-full rounded-2xl" />
                 ))}
             </div>
         );
     }
 
+    // Updated empty state message
+    let emptyMessage = "No orders found.";
+    if (filterStatus !== 'all') {
+        emptyMessage = `No "${filterStatus.replace(/_/g, ' ')}" orders found.`;
+    }
+    if (searchTerm) {
+        emptyMessage = `No orders found matching "${searchTerm}"` + (filterStatus !== 'all' ? ` with status "${filterStatus.replace(/_/g, ' ')}".` : '.');
+    }
+
+
     return (
         <div className="space-y-6">
-            <StatusFilter
-                statuses={["pending", "scheduled", "picked"]}
-                selectedStatus={selectedStatus}
-                onChange={setSelectedStatus}
-            />
-
-            {filteredOrders.length === 0 && (
-                <p className="text-md text-jet-black">No pickup orders found.</p>
-            )}
-
-            {filteredOrders.map((order) => (
-                <div
-                    key={order.id}
-                    className="p-4 border rounded-xl bg-white shadow-md space-y-2"
-                >
-                    <h3 className="font-semibold text-xl">
-                        {order.contactInfo?.name || "Unnamed"}
-                    </h3>
-                    <p className="text-sm text-jet-black">
-                        Email: {order.contactInfo?.email}
-                    </p>
-                    <p className="text-sm text-jet-black">
-                        Phone: {order.contactInfo?.phone}
-                    </p>
-
-                    <div className="flex gap-4 items-center mb-2 w-full sm:w-1/2">
-                        <Label htmlFor={`pickupDate-${order.id}`}>Pickup Date:</Label>
-                        <Input
-                            id={`pickupDate-${order.id}`}
-                            type="date"
-                            value={
-                                order.processing.pickupDate
-                                    ? format(new Date(order.processing.pickupDate), "yyyy-MM-dd")
-                                    : ""
-                            }
-                            onChange={(e) =>
-                                updatePickup(order.id, "pickupDate", e.target.value)
-                            }
-                        />
-                    </div>
-
-                    <div className="flex flex-wrap gap-4 items-center">
-                        <Label htmlFor={`pickupStatus-${order.id}`}>Status:</Label>
-                        <select
-                            id={`pickupStatus-${order.id}`}
-                            value={order.processing.pickupStatus || "pending"}
-                            onChange={(e) =>
-                                updatePickup(order.id, "pickupStatus", e.target.value)
-                            }
-                            className="border rounded px-3 py-1 hover:bg-accent transition-colors"
-                        >
-                            <option value="pending">Pending</option>
-                            <option value="scheduled">Scheduled</option>
-                            <option value="picked">Picked</option>
-                        </select>
-
+            {/* Filter and Search Controls */}
+            <div className="flex flex-col sm:flex-row justify-between gap-4 mb-6">
+                {/* Filter Buttons */}
+                <div className="flex flex-wrap gap-3">
+                    {statusOptions.map(status => (
                         <Button
-                            variant="outline"
-                            onClick={() =>
-                                updatePickup(order.id, "pickupStatus", "scheduled")
-                            }
+                            key={status}
+                            variant={filterStatus === status ? 'default' : 'outline'}
+                            onClick={() => setFilterStatus(status)}
+                            size="sm"
                         >
-                            Set as Scheduled
+                            {status === 'all' ? 'All Pickup Orders' : status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                         </Button>
-
-                        <Button
-                            className="bg-electric-blue text-white"
-                            onClick={() => updatePickup(order.id, "pickupStatus", "picked")}
-                        >
-                            Mark as Picked
-                        </Button>
-                    </div>
+                    ))}
                 </div>
-            ))}
+                {/* Search Input */}
+                <div className="relative w-full sm:w-auto sm:min-w-[200px]">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+                    <Input
+                        placeholder="Search by name or ID..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="pl-9 pr-3"
+                    />
+                </div>
+            </div>
+
+            {/* Order Cards */}
+            {filteredAndSearchedOrders.length === 0 ? (
+                <p className="text-center text-gray-500">{emptyMessage}</p>
+            ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {filteredAndSearchedOrders.map((order) => {
+                        // Add safety check inside the map loop
+                        if (!order || !order.id || !order.processing) {
+                            console.warn("Skipping rendering for invalid order item:", order);
+                            return null;
+                        }
+
+                        const pickupStatus = order.processing.pickupStatus;
+
+                        return (
+                            <Card key={order.id} className="rounded-2xl shadow-md">
+                                <CardContent className="p-6 space-y-3">
+                                    {/* Display relevant order info */}
+                                    <div className="flex justify-between items-start">
+                                        <div>
+                                            <h3 className="text-lg font-semibold text-jet-black">{order.contactInfo?.name || "No Name"}</h3>
+                                            <p className="text-sm text-gray-500">{order.contactInfo?.email || "No Email"}</p>
+                                        </div>
+                                        {/* Display the current pickupStatus */}
+                                        <Badge
+                                            variant="outline"
+                                            className={`capitalize ${pickupStatus === "picked"
+                                                ? "bg-green-100 text-green-600"
+                                                : pickupStatus === "scheduled"
+                                                    ? "bg-blue-100 text-blue-600"
+                                                    : "bg-gray-100 text-gray-600" // Default for awaiting_pickup
+                                                }`}
+                                        >
+                                            {pickupStatus || 'Unknown Status'}
+                                        </Badge>
+                                    </div>
+
+                                    <div className="flex items-center justify-between text-sm text-gray-700">
+                                        <span className="flex items-center gap-1">
+                                            <Hash className="h-4 w-4 text-indigo-500" />
+                                            <strong>Order #:</strong> {order.id.slice(0, 6).toUpperCase()}
+                                        </span>
+                                    </div>
+
+                                    {/* Order details */}
+                                    <div className="text-sm text-gray-700 space-y-1">
+                                        <p className="text-gray-700">
+                                            <Tag className="inline mr-1 h-4 w-4 text-blue-500" />
+                                            <strong>Repair:</strong> {order.repairDescription || order.repairType || "N/A"}
+                                        </p>
+                                        <p className="text-gray-700">
+                                            <Truck className="inline mr-1 h-4 w-4 text-gray-600" />
+                                            <strong>Method:</strong> Pickup
+                                        </p>
+                                        {order.notes && (
+                                            <p className="text-gray-700">
+                                                <Package className="inline mr-1 h-4 w-4 text-blue-500" />
+                                                <strong>Notes:</strong> {order.notes}
+                                            </p>
+                                        )}
+                                        {order.processing?.preferredDate && (
+                                            <p className="text-gray-700">
+                                                <CalendarDays className="inline mr-1 h-4 w-4 text-purple-500" />
+                                                <strong>Preferred Date:</strong> {order.processing.preferredDate}
+                                            </p>
+                                        )}
+                                        {order.processing?.scheduledPickupDate?.seconds && (
+                                            <p className="text-gray-700">
+                                                <CalendarDays className="inline mr-1 h-4 w-4 text-blue-500" />
+                                                <strong>Scheduled:</strong> {format(new Date(order.processing.scheduledPickupDate.seconds * 1000), 'dd MMM yyyy HH:mm')}
+                                            </p>
+                                        )}
+                                        {order.processing?.actualPickupDate?.seconds && (
+                                            <p className="text-gray-700">
+                                                <CalendarDays className="inline mr-1 h-4 w-4 text-green-500" />
+                                                <strong>Picked Up:</strong> {format(new Date(order.processing.actualPickupDate.seconds * 1000), 'dd MMM yyyy HH:mm')}
+                                            </p>
+                                        )}
+                                        {order.processing?.pickupLocation && (
+                                            <p className="text-gray-700">
+                                                <MapPin className="inline mr-1 h-4 w-4 text-red-500" />
+                                                <strong>Location:</strong> {order.processing.pickupLocation}
+                                            </p>
+                                        )}
+                                        {/* Add more relevant details like price, payment status if needed in the card preview */}
+                                    </div>
+
+                                    {/* Actions based on current pickupStatus */}
+                                    <div className="mt-4 flex flex-wrap justify-end gap-2"> {/* Use flex-wrap */}
+                                        {/* Button/Input for Scheduling (Optional Step) */}
+                                        {pickupStatus === 'awaiting_pickup' && (
+                                            <>
+                                                {/* Could add a date picker input here */}
+                                                <Input type="date" className="w-auto sm:w-auto min-w-[120px]" onChange={(e) => { /* Handle date change */ console.log(e.target.value); }} /> {/* Placeholder Input */}
+                                                <Button
+                                                    size="sm"
+                                                    variant="secondary"
+                                                    onClick={() => markAsScheduled(order, '2023-10-27')} /* Replace '2023-10-27' with actual date from input */
+                                                    disabled={isUpdatingOrderId === order.id}
+                                                >
+                                                    {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                                    Schedule Pickup
+                                                </Button>
+                                            </>
+                                        )}
+
+                                        {/* Button to mark as Picked Up */}
+                                        {(pickupStatus === 'awaiting_pickup' || pickupStatus === 'scheduled') && (
+                                            <Button
+                                                size="sm"
+                                                variant="default" // Use default for the final action before fulfillment
+                                                onClick={() => markAsPickedUp(order)}
+                                                disabled={isUpdatingOrderId === order.id}
+                                            >
+                                                {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                                <CheckCircle className="mr-1 h-4 w-4" /> Mark Picked Up
+                                            </Button>
+                                        )}
+
+                                        {/* Message if picked up */}
+                                        {pickupStatus === 'picked' && (
+                                            <Badge variant="default" className="capitalize">Picked Up</Badge>
+                                        )}
+
+                                        {/* Maybe a View Details button similar to OrdersTable (Optional) */}
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        );
+                    })}
+                </div>
+            )}
         </div>
     );
 };

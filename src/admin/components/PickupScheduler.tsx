@@ -10,7 +10,7 @@ import {
     updateDoc,
     serverTimestamp,
     Timestamp,
-    getDoc,
+    getDoc, // Needed for update logic
 } from "firebase/firestore";
 import { db } from "@/firebaseConfig";
 import { format } from "date-fns";
@@ -23,40 +23,41 @@ import {
     Hash,
     Truck, // Method icon
     User, // Name icon
-    MapPin, // Location icon
+    MapPin, // Location icon (pickup address)
     CalendarDays, // Date icon
     DollarSign, // Price icon
     CreditCard, // Payment icon
     Search, // Search icon
     Loader2, // Loading spinner
-    Clock, // Status icon
     CheckCircle, // Picked icon
-    Package,
-    Tag
+    Tag, // Repair Type
+    Package, // Notes
+    Clock, // Status icon
 } from "lucide-react";
 import { toast } from 'sonner';
 
-// Import types
-import { Order, OrderStatus, DeliveryMethod, PickupStatus, PaymentStatus } from "@/types/order";
+// Import types - Using InitialMethod and FulfillmentMethod
+import { Order, OrderStatus, InitialMethod, FulfillmentMethod, RepairStatus, PaymentStatus } from "@/types/order";
 
-// Define filter status options for Pickup Scheduler
-const pickupFlowStatuses: PickupStatus[] = [
-    "awaiting_pickup", // Initial status set by customer flow or RepairManager? Let's assume RepairManager sets Ready for Pickup repairStatus and 'awaiting_pickup' pickupStatus
-    "scheduled",
-    "picked",
+// Define filter status options for Pickup Scheduler (KitFix Picks Up)
+const kitFixPickupStatuses: RepairStatus[] = [
+    "Routed for Pickup (KitFix)", // Initial status from OrdersTable
+    "Scheduled for Pickup (KitFix)", // Optional scheduling step
+    "Item Picked Up (KitFix)", // After KitFix picks up
 ];
-type PickupFilterStatus = PickupStatus | 'all';
+const relevantStatuses: RepairStatus[] = [...kitFixPickupStatuses];
+type PickupFilterStatus = RepairStatus | 'all';
 
 
 const PickupScheduler: React.FC = () => {
+    const [filterStatus, setFilterStatus] = useState<PickupFilterStatus>('Routed for Pickup (KitFix)'); // Default filter
     const [orders, setOrders] = useState<Order[]>([]);
     const [loading, setLoading] = useState(true);
-    const [filterStatus, setFilterStatus] = useState<PickupFilterStatus>('awaiting_pickup'); // Default filter
     const [searchTerm, setSearchTerm] = useState(''); // State for search term
     const [isUpdatingOrderId, setIsUpdatingOrderId] = useState<string | null>(null);
 
     // Pickup statuses available for filtering
-    const statusOptions: PickupFilterStatus[] = ['all', ...pickupFlowStatuses];
+    const statusOptions: PickupFilterStatus[] = ['all', ...relevantStatuses];
 
     useEffect(() => {
         const fetchOrders = async () => {
@@ -64,13 +65,13 @@ const PickupScheduler: React.FC = () => {
             try {
                 const ordersRef = collection(db, "orders");
 
-                // Query for orders that are 'awaiting_fulfillment' and have deliveryMethod 'pickup'
-                // AND have a pickupStatus relevant to this flow (optional filter).
-                // We can filter by deliveryMethod and main status, then client-filter by pickupStatus and repairStatus.
+                // Query for orders in 'in_progress' status, and initialMethod === 'pickup'
+                // These are orders that KitFix needs to pick up FROM the customer.
+                // The query filters by main status and initial method.
                 let q = query(
                     ordersRef,
-                    where('processing.status', '==', 'awaiting_fulfillment' as OrderStatus),
-                    where('processing.deliveryMethod', '==', 'pickup' as DeliveryMethod),
+                    where('processing.status', '==', 'in_progress' as OrderStatus), // Must be in_progress after routing from OrdersTable
+                    where('processing.initialMethod', '==', 'pickup' as InitialMethod), // Initial method is pickup (KitFix picks up)
                     orderBy("createdAt", "desc") // Order by creation date
                 );
 
@@ -86,18 +87,25 @@ const PickupScheduler: React.FC = () => {
                     };
                 }) as Order[];
 
-                // Client-side filter to ensure they are in the correct repair status (Ready for Pickup)
-                // and have a pickup status relevant to this manager's view.
+                // DEBUG: Log fetched orders before client-side filtering
+                console.log("PickupScheduler: Fetched orders from Firestore (in_progress, initialMethod=pickup):", fetchedOrders);
+
+
+                // Client-side filter to ensure they have a repair status relevant to this manager
+                // This filters down the fetched orders based on the specific repairStatus values this manager handles.
                 const relevantOrders = fetchedOrders.filter(order =>
-                    order.processing?.repairStatus === 'Ready for Pickup' && // Must be explicitly ready for pickup
-                    order.processing?.pickupStatus && pickupFlowStatuses.includes(order.processing.pickupStatus) // Must have a relevant pickup status
+                    order.processing?.repairStatus && relevantStatuses.includes(order.processing.repairStatus)
                 );
+
+                // DEBUG: Log orders after filtering by relevantStatuses
+                console.log("PickupScheduler: Filtered orders by relevantStatuses:", relevantOrders);
+
 
                 setOrders(relevantOrders); // Set the state with relevant orders
 
             } catch (error) {
-                console.error("Error fetching pickup orders:", error);
-                toast.error("Error fetching pickup orders", {
+                console.error("Error fetching KitFix pickup orders:", error);
+                toast.error("Error fetching KitFix pickup orders", {
                     description: "Could not load orders for Pickup Scheduler.",
                 });
             } finally {
@@ -106,8 +114,10 @@ const PickupScheduler: React.FC = () => {
         };
 
         // Fetch orders whenever the component mounts or db changes.
+        // filterStatus and searchTerm changes are handled by client-side filtering below.
         fetchOrders();
-    }, [db]); // Dependency array - filter/search are client-side
+        // Added db to dependencies (unlikely to change, but good practice)
+    }, [db]);
 
 
     // Generic update function for pickup orders
@@ -131,13 +141,13 @@ const PickupScheduler: React.FC = () => {
             const finalUpdates: Partial<Order> = {
                 ...updates,
                 processing: updatedProcessing,
-                updatedAt: serverTimestamp(),
+                updatedAt: serverTimestamp(), // Always update timestamp
             };
 
             await updateDoc(orderRef, finalUpdates);
 
             // Optimistically update local state
-            const updatedOrder = { ...existingOrder, ...finalUpdates };
+            const updatedOrder = { ...existingOrder, ...finalUpdates }; // Merge locally
             if (finalUpdates.processing) updatedOrder.processing = { ...existingOrder.processing, ...finalUpdates.processing };
             if (finalUpdates.payment) updatedOrder.payment = { ...existingOrder.payment, ...finalUpdates.payment };
 
@@ -148,7 +158,7 @@ const PickupScheduler: React.FC = () => {
 
             return true;
         } catch (error) {
-            console.error("Error updating pickup order:", error);
+            console.error("Error updating KitFix pickup order:", error);
             toast.error("Update Failed", {
                 description: `Could not update order ${orderId.slice(0, 6).toUpperCase()}.`,
             });
@@ -158,14 +168,15 @@ const PickupScheduler: React.FC = () => {
         }
     };
 
-    // Action: Mark order as Scheduled for Pickup (Optional, maybe just update date)
-    const markAsScheduled = async (order: Order, scheduleDate: string) => {
+    // Action: Mark order as Scheduled for KitFix Pickup (Optional step)
+    const markScheduledForKitFixPickup = async (order: Order, scheduleDate: string) => {
         if (!order || !order.id || !order.processing) {
             toast.error("Action Failed", { description: "Order data is incomplete." });
             return;
         }
-        if (order.processing.pickupStatus !== 'awaiting_pickup') {
-            toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not awaiting scheduling.`);
+        // Check if status is appropriate for scheduling
+        if (order.processing.initialMethod !== 'pickup' || order.processing.status !== 'in_progress' || order.processing.repairStatus !== 'Routed for Pickup (KitFix)') {
+            toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not awaiting scheduling for KitFix pickup.`);
             return;
         }
         if (!scheduleDate) {
@@ -173,7 +184,7 @@ const PickupScheduler: React.FC = () => {
             return;
         }
 
-        // Convert date string to Timestamp (at the beginning of the day)
+        // Convert date string to Timestamp
         const date = new Date(scheduleDate);
         if (isNaN(date.getTime())) {
             toast.error("Invalid date selected.");
@@ -185,48 +196,75 @@ const PickupScheduler: React.FC = () => {
         const updates: Partial<Order> = {
             processing: {
                 ...order.processing,
-                pickupStatus: "scheduled" as PickupStatus,
-                scheduledPickupDate: scheduledTimestamp, // Save scheduled date as Timestamp
+                repairStatus: "Scheduled for Pickup (KitFix)" as RepairStatus, // Update repair status
+                scheduledInitialPickupDate: scheduledTimestamp, // Save scheduled date as Timestamp
+                // Keep main status as 'in_progress'
             },
         };
         const success = await updatePickupOrder(order.id, updates);
-        if (success) toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} marked as Scheduled.`);
+        if (success) toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} scheduled for KitFix pickup.`);
     };
 
 
-    // Action: Mark order as Picked Up
-    const markAsPickedUp = async (order: Order) => {
+    // Action: Mark order as Picked Up by KitFix
+    const markPickedUpByKitFix = async (order: Order) => {
         if (!order || !order.id || !order.processing) {
             toast.error("Action Failed", { description: "Order data is incomplete." });
             return;
         }
-        if (order.processing.pickupStatus !== 'awaiting_pickup' && order.processing.pickupStatus !== 'scheduled') {
-            toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not ready to be marked as picked up.`);
+        // Check if status is appropriate for marking as picked up
+        if (order.processing.initialMethod !== 'pickup' || order.processing.status !== 'in_progress' || (order.processing.repairStatus !== 'Routed for Pickup (KitFix)' && order.processing.repairStatus !== 'Scheduled for Pickup (KitFix)')) {
+            toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not ready to be marked as picked up by KitFix.`);
+            return;
+        }
+        if (order.processing.repairStatus === 'Item Picked Up (KitFix)') {
+            toast.info(`Order ${order.id.slice(0, 6).toUpperCase()} is already marked as picked up by KitFix.`);
             return;
         }
 
+
+        // Updates: Change repairStatus, add timestamp
         const updates: Partial<Order> = {
             processing: {
                 ...order.processing,
-                status: "fulfilled" as OrderStatus, // CHANGE main status to fulfilled
-                pickupStatus: "picked" as PickupStatus, // Set final pickup status
-                actualPickupDate: Timestamp.now(), // Record actual pickup time
+                repairStatus: "Item Picked Up (KitFix)" as RepairStatus, // Set status for this initial phase
+                actualInitialPickupDate: Timestamp.now(), // Record actual pickup time
+                // Keep main status as 'in_progress'
             },
-            // Maybe clear fulfillment specific statuses/timestamps here?
-            // readyForFulfillmentAt: null // Set to null to remove or clear
         };
         const success = await updatePickupOrder(order.id, updates);
-        if (success) toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} marked as Picked Up and Fulfilled.`);
+        if (success) {
+            toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} marked as Picked Up by KitFix.`);
+            // This order is now ready for the Repair Manager
+            // Perform a second update immediately to signal readiness for the Repair Manager
+            const nextUpdates: Partial<Order> = {
+                processing: {
+                    // Need to fetch the latest state after the first update
+                    // Or rely on optimistic update merging (less safe with multiple updates)
+                    // Simplest: just set the *next* repairStatus
+                    repairStatus: "Ready for Repair (from Pickup)" as RepairStatus, // Signal ready for Repair Manager
+                },
+            };
+            // updatePickupOrder already fetches and merges, so we can use it again.
+            // This will trigger another optimistic local state update.
+            const secondSuccess = await updatePickupOrder(order.id, nextUpdates);
+            if (secondSuccess) {
+                toast.info(`Order ${order.id.slice(0, 6).toUpperCase()} sent to Repair Queue.`);
+            } else {
+                toast.error(`Failed to send order ${order.id.slice(0, 6).toUpperCase()} to Repair Queue.`);
+            }
+        }
     };
 
 
     // --- Client-side Filtering and Searching ---
+    // Filter by selected RepairStatus and Search Term
     const filteredAndSearchedOrders = orders.filter(order => {
-        // Add safety check for processing and pickupStatus
-        if (!order.processing || !order.processing.pickupStatus) return false;
+        // Add safety check for processing and repairStatus
+        if (!order.processing || !order.processing.repairStatus) return false;
 
         // 1. Filter by Status
-        const statusMatch = filterStatus === 'all' || order.processing.pickupStatus === filterStatus;
+        const statusMatch = filterStatus === 'all' || order.processing.repairStatus === filterStatus;
 
         if (!statusMatch) return false;
 
@@ -251,6 +289,10 @@ const PickupScheduler: React.FC = () => {
         );
     }
 
+    // Add debugging log before mapping (after loading)
+    console.log("PickupScheduler: Rendering Filtered Orders:", filteredAndSearchedOrders);
+
+
     // Updated empty state message
     let emptyMessage = "No orders found.";
     if (filterStatus !== 'all') {
@@ -274,7 +316,7 @@ const PickupScheduler: React.FC = () => {
                             onClick={() => setFilterStatus(status)}
                             size="sm"
                         >
-                            {status === 'all' ? 'All Pickup Orders' : status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                            {status === 'all' ? 'All KitFix Pickup Orders' : status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                         </Button>
                     ))}
                 </div>
@@ -302,7 +344,10 @@ const PickupScheduler: React.FC = () => {
                             return null;
                         }
 
-                        const pickupStatus = order.processing.pickupStatus;
+                        const repairStatus = order.processing.repairStatus; // Use repairStatus for actions
+                        const initialMethod = order.processing.initialMethod; // Get initial method for display
+                        const fulfillmentMethod = order.processing.fulfillmentMethod; // Get fulfillment method for display
+
 
                         return (
                             <Card key={order.id} className="rounded-2xl shadow-md">
@@ -313,17 +358,9 @@ const PickupScheduler: React.FC = () => {
                                             <h3 className="text-lg font-semibold text-jet-black">{order.contactInfo?.name || "No Name"}</h3>
                                             <p className="text-sm text-gray-500">{order.contactInfo?.email || "No Email"}</p>
                                         </div>
-                                        {/* Display the current pickupStatus */}
-                                        <Badge
-                                            variant="outline"
-                                            className={`capitalize ${pickupStatus === "picked"
-                                                ? "bg-green-100 text-green-600"
-                                                : pickupStatus === "scheduled"
-                                                    ? "bg-blue-100 text-blue-600"
-                                                    : "bg-gray-100 text-gray-600" // Default for awaiting_pickup
-                                                }`}
-                                        >
-                                            {pickupStatus || 'Unknown Status'}
+                                        {/* Display the current repairStatus */}
+                                        <Badge variant="outline" className="capitalize">
+                                            {repairStatus || 'Unknown Status'}
                                         </Badge>
                                     </div>
 
@@ -336,18 +373,32 @@ const PickupScheduler: React.FC = () => {
 
                                     {/* Order details */}
                                     <div className="text-sm text-gray-700 space-y-1">
+                                        {initialMethod && (
+                                            <p className="text-gray-700">
+                                                <Truck className="inline mr-1 h-4 w-4 text-gray-600" />
+                                                <strong>Initial:</strong> {initialMethod.charAt(0).toUpperCase() + initialMethod.slice(1)}
+                                            </p>
+                                        )}
+                                        {fulfillmentMethod && (
+                                            <p className="text-gray-700">
+                                                <Truck className="inline mr-1 h-4 w-4 text-gray-600" />
+                                                <strong>Return:</strong> {fulfillmentMethod.charAt(0).toUpperCase() + fulfillmentMethod.slice(1)}
+                                            </p>
+                                        )}
                                         <p className="text-gray-700">
                                             <Tag className="inline mr-1 h-4 w-4 text-blue-500" />
                                             <strong>Repair:</strong> {order.repairDescription || order.repairType || "N/A"}
-                                        </p>
-                                        <p className="text-gray-700">
-                                            <Truck className="inline mr-1 h-4 w-4 text-gray-600" />
-                                            <strong>Method:</strong> Pickup
                                         </p>
                                         {order.notes && (
                                             <p className="text-gray-700">
                                                 <Package className="inline mr-1 h-4 w-4 text-blue-500" />
                                                 <strong>Notes:</strong> {order.notes}
+                                            </p>
+                                        )}
+                                        {order.contactInfo?.address && initialMethod === 'pickup' && ( // KitFix picks up from customer address
+                                            <p className="text-gray-700">
+                                                <MapPin className="inline mr-1 h-4 w-4 text-red-500" />
+                                                <strong>Pickup Address:</strong> {order.contactInfo.address}
                                             </p>
                                         )}
                                         {order.processing?.preferredDate && (
@@ -356,38 +407,32 @@ const PickupScheduler: React.FC = () => {
                                                 <strong>Preferred Date:</strong> {order.processing.preferredDate}
                                             </p>
                                         )}
-                                        {order.processing?.scheduledPickupDate?.seconds && (
+                                        {order.processing?.scheduledInitialPickupDate?.seconds && (
                                             <p className="text-gray-700">
                                                 <CalendarDays className="inline mr-1 h-4 w-4 text-blue-500" />
-                                                <strong>Scheduled:</strong> {format(new Date(order.processing.scheduledPickupDate.seconds * 1000), 'dd MMM yyyy HH:mm')}
+                                                <strong>Scheduled:</strong> {format(new Date(order.processing.scheduledInitialPickupDate.seconds * 1000), 'dd MMM yyyy HH:mm')}
                                             </p>
                                         )}
-                                        {order.processing?.actualPickupDate?.seconds && (
+                                        {order.processing?.actualInitialPickupDate?.seconds && (
                                             <p className="text-gray-700">
                                                 <CalendarDays className="inline mr-1 h-4 w-4 text-green-500" />
-                                                <strong>Picked Up:</strong> {format(new Date(order.processing.actualPickupDate.seconds * 1000), 'dd MMM yyyy HH:mm')}
+                                                <strong>Picked Up:</strong> {format(new Date(order.processing.actualInitialPickupDate.seconds * 1000), 'dd MMM yyyy HH:mm')}
                                             </p>
                                         )}
-                                        {order.processing?.pickupLocation && (
-                                            <p className="text-gray-700">
-                                                <MapPin className="inline mr-1 h-4 w-4 text-red-500" />
-                                                <strong>Location:</strong> {order.processing.pickupLocation}
-                                            </p>
-                                        )}
-                                        {/* Add more relevant details like price, payment status if needed in the card preview */}
+                                        {/* Add more relevant details like price, payment status if needed */}
                                     </div>
 
-                                    {/* Actions based on current pickupStatus */}
+                                    {/* --- Actions --- */}
                                     <div className="mt-4 flex flex-wrap justify-end gap-2"> {/* Use flex-wrap */}
                                         {/* Button/Input for Scheduling (Optional Step) */}
-                                        {pickupStatus === 'awaiting_pickup' && (
+                                        {repairStatus === 'Routed for Pickup (KitFix)' && (
                                             <>
                                                 {/* Could add a date picker input here */}
                                                 <Input type="date" className="w-auto sm:w-auto min-w-[120px]" onChange={(e) => { /* Handle date change */ console.log(e.target.value); }} /> {/* Placeholder Input */}
                                                 <Button
                                                     size="sm"
                                                     variant="secondary"
-                                                    onClick={() => markAsScheduled(order, '2023-10-27')} /* Replace '2023-10-27' with actual date from input */
+                                                    onClick={() => markScheduledForKitFixPickup(order, '2023-10-27')} /* Replace '2023-10-27' with actual date from input */
                                                     disabled={isUpdatingOrderId === order.id}
                                                 >
                                                     {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -396,12 +441,12 @@ const PickupScheduler: React.FC = () => {
                                             </>
                                         )}
 
-                                        {/* Button to mark as Picked Up */}
-                                        {(pickupStatus === 'awaiting_pickup' || pickupStatus === 'scheduled') && (
+                                        {/* Button to mark as Picked Up by KitFix */}
+                                        {(repairStatus === 'Routed for Pickup (KitFix)' || repairStatus === 'Scheduled for Pickup (KitFix)') && (
                                             <Button
                                                 size="sm"
-                                                variant="default" // Use default for the final action before fulfillment
-                                                onClick={() => markAsPickedUp(order)}
+                                                variant="default" // Use default for the final action before routing to repair
+                                                onClick={() => markPickedUpByKitFix(order)}
                                                 disabled={isUpdatingOrderId === order.id}
                                             >
                                                 {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -409,12 +454,10 @@ const PickupScheduler: React.FC = () => {
                                             </Button>
                                         )}
 
-                                        {/* Message if picked up */}
-                                        {pickupStatus === 'picked' && (
-                                            <Badge variant="default" className="capitalize">Picked Up</Badge>
+                                        {/* Message if picked up and ready for repair */}
+                                        {repairStatus === 'Ready for Repair (from Pickup)' && (
+                                            <Badge variant="default" className="capitalize">Ready for Repair</Badge>
                                         )}
-
-                                        {/* Maybe a View Details button similar to OrdersTable (Optional) */}
                                     </div>
                                 </CardContent>
                             </Card>

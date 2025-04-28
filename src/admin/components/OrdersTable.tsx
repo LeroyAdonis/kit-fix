@@ -39,11 +39,14 @@ import {
     User,
     Loader2,
     ArrowRight,
+    MapPin, // Added for location
+    CalendarDays
 } from "lucide-react";
 import OrderStepTracker from "@/components/OrderStepTracker";
 
 // Import the updated Order interfaces
-import { Order, OrderStatus, PaymentStatus, RepairStatus, DeliveryMethod, DropoffStatus, PickupStatus, DeliveryStatus } from "@/types/order";
+// Removed unused statuses as they are not used in THIS file's logic
+import { Order, OrderStatus, PaymentStatus, RepairStatus, InitialMethod, FulfillmentMethod } from "@/types/order";
 
 // Import sonner toast
 import { toast } from 'sonner';
@@ -188,82 +191,68 @@ const OrdersTable: React.FC = () => {
     // Renamed function to routeOrder
     const routeOrder = async (order: Order) => {
         // This function is called from the Dialog for a 'pending' order
-        if (!order || order.processing?.status !== 'pending' || order.payment?.status !== 'paid' || !order.id) { // Ensure payment status is paid
+        if (!order || order.processing?.status !== 'pending' || order.payment?.status !== 'paid' || !order.id || !order.processing?.initialMethod) { // Ensure initialMethod is set
             toast.error("Routing Failed", {
-                description: "Order is not in a routable state (must be pending and paid).",
+                description: "Order is not in a routable state (must be pending, paid, and have initial method).",
             });
             return;
         }
 
-        const deliveryMethod = order.processing.deliveryMethod;
+        // Use initialMethod to determine routing
+        const initialMethod = order.processing.initialMethod;
 
         // Prepare updates for routing
         let updates: Partial<Order> = {
             processing: {
-                // Start with existing processing fields from the order object
                 ...order.processing,
                 status: "in_progress" as OrderStatus, // Change main status to in_progress
                 // repairStatus and method-specific statuses are set below
             },
-            updatedAt: serverTimestamp(), // Use serverTimestamp()
+            updatedAt: serverTimestamp(),
         };
 
         let destinationManager: string;
 
-        switch (deliveryMethod) {
+        switch (initialMethod) { // <-- Use initialMethod here
             case 'dropoff':
                 destinationManager = 'Dropoff Manager';
                 updates.processing!.repairStatus = "Routed to Dropoff" as RepairStatus;
-                updates.processing!.dropoffStatus = "awaiting_dropoff" as DropoffStatus; // Ensure status is correct
+                // We are no longer setting dropoffStatus here. DropoffManager handles its own sub-statuses.
                 break;
             case 'pickup':
-                destinationManager = 'Repair Manager (Pickup)';
-                updates.processing!.repairStatus = "Sent to Repair Manager" as RepairStatus;
-                updates.processing!.repairManagerStatus = "Assigned";
-                updates.processing!.pickupStatus = "awaiting_pickup" as PickupStatus; // Ensure status is correct
-                break;
-            case 'delivery':
-                destinationManager = 'Repair Manager (Delivery)';
-                updates.processing!.repairStatus = "Sent to Repair Manager" as RepairStatus;
-                updates.processing!.repairManagerStatus = "Assigned";
-                updates.processing!.deliveryStatus = "awaiting_delivery" as DeliveryStatus; // Ensure status is correct
+                destinationManager = 'Pickup Scheduler'; // <-- Route to Pickup Scheduler for initial pickup
+                updates.processing!.repairStatus = "Routed for Pickup (KitFix)" as RepairStatus; // <-- New status name
+                // We are no longer setting pickupStatus here. PickupScheduler handles its own sub-statuses.
                 break;
             default:
-                // Fallback for unspecified method - route to Repair Manager
-                destinationManager = 'Repair Manager (Unspecified)';
-                updates.processing!.repairStatus = "Sent to Repair Manager" as RepairStatus;
-                updates.processing!.repairManagerStatus = "Assigned";
-                console.warn(`Order ${order.id} has no specified delivery method. Routing to Repair Manager.`);
-                // You might want to prevent routing if deliveryMethod is missing/invalid
-                toast.error("Routing Failed", { description: "Order is missing delivery method." });
+                toast.error("Routing Failed", { description: "Order is missing a valid initial method." });
                 return; // Stop routing if method is invalid
         }
 
-        const success = await updateOrderField(order.id, updates); // updateOrderField now removes from local state on success
+        const success = await updateOrderField(order.id, updates); // updateOrderField removes from local state on success
 
         if (success) {
-            toast.success("Order Routed", {
-                description: `Order ${order.id.slice(0, 6).toUpperCase()} sent to ${destinationManager}. It has been removed from this list.`, // Updated toast
-            });
+            // Updated toast message based on new logic
+            const methodText = initialMethod === 'dropoff' ? 'Customer Dropoff' : 'KitFix Pickup';
+            toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} sent for ${methodText}. It has been removed from this list.`);
             // Close the dialog after successful routing
             setOpenDialogId(null); // Close the dialog by setting the ID to null
-        } // Error toast is handled in updateOrderField
+        } // Error toast handled in updateOrderField
     };
 
     // Helper to determine button text for routing
-    const getRouteButtonText = (order: Order): string => { // Expect Order, not Order | null here
-        if (!order.processing?.deliveryMethod) { // Use optional chaining
-            return "Route Order"; // Fallback text
+    const getRouteButtonText = (order: Order): string => { // Expect Order
+        // Use initialMethod here
+        if (!order.processing?.initialMethod) { // Use optional chaining
+            return "Route Order (Missing Method)"; // Fallback text
         }
-        switch (order.processing.deliveryMethod) {
+        switch (order.processing.initialMethod) { // <-- Use initialMethod here
             case 'dropoff':
-                return "Route to Dropoff Manager";
+                return "Route to Dropoff Manager (Dropoff)";
             case 'pickup':
-                return "Route to Repair Manager (Pickup)";
-            case 'delivery':
-                return "Route to Repair Manager (Delivery)";
+                return "Route to Pickup Scheduler (KitFix Pickup)"; // <-- Updated text
             default:
-                return "Route Order"; // Fallback
+                return "Route Order (Unknown Method)"; // Fallback
         }
     };
 
@@ -329,7 +318,8 @@ const OrdersTable: React.FC = () => {
                                                         : "bg-gray-100 text-gray-600"
                                                 }`}
                                         >
-                                            {order.processing?.repairStatus || "Pending Routing"}
+                                            {/* Display the specific repairStatus for clarity */}
+                                            {order.processing?.repairStatus || "Pending Routing"} {/* Default specifically for this table */}
                                         </Badge>
                                     </div>
                                     <div className="flex items-center justify-between text-sm text-gray-700">
@@ -349,21 +339,34 @@ const OrdersTable: React.FC = () => {
                                                 <strong>Notes:</strong> {order.notes}
                                             </p>
                                         )}
-                                        {order.processing?.deliveryMethod && (
+                                        {/* Display Initial Method in card preview */}
+                                        {order.processing?.initialMethod && (
                                             <p className="text-gray-700">
                                                 <Truck className="inline mr-1 h-4 w-4 text-gray-600" />
-                                                <strong>Method:</strong>{" "}
-                                                {order.processing.deliveryMethod.charAt(0).toUpperCase() + order.processing.deliveryMethod.slice(1)}
+                                                <strong>Initial:</strong>{" "}
+                                                {order.processing.initialMethod.charAt(0).toUpperCase() + order.processing.initialMethod.slice(1)}
                                             </p>
                                         )}
-                                        {order.contactInfo?.address && order.processing?.deliveryMethod === 'delivery' && (
+                                        {/* Display Fulfillment Method in card preview */}
+                                        {order.processing?.fulfillmentMethod && (
                                             <p className="text-gray-700">
-                                                <strong>Delivery Address:</strong> {order.contactInfo.address}
+                                                <Truck className="inline mr-1 h-4 w-4 text-gray-600" />
+                                                <strong>Return:</strong>{" "}
+                                                {order.processing.fulfillmentMethod.charAt(0).toUpperCase() + order.processing.fulfillmentMethod.slice(1)}
                                             </p>
                                         )}
-                                        {selectedOrder?.processing?.preferredDate && ( // Use selectedOrder here
+                                        {/* Display preferred date in card preview */}
+                                        {order.processing?.preferredDate && (
                                             <p className="text-gray-700">
-                                                <strong>Preferred Date:</strong> {selectedOrder.processing.preferredDate}
+                                                <CalendarDays className="inline mr-1 h-4 w-4 text-purple-500" />
+                                                <strong>Preferred Date:</strong> {order.processing.preferredDate}
+                                            </p>
+                                        )}
+                                        {/* Display relevant address (e.g., contact address for context) */}
+                                        {order.contactInfo?.address && (
+                                            <p className="text-gray-700">
+                                                <MapPin className="inline mr-1 h-4 w-4 text-red-500" />
+                                                <strong>Address:</strong> {order.contactInfo.address}
                                             </p>
                                         )}
                                     </div>
@@ -429,12 +432,20 @@ const OrdersTable: React.FC = () => {
                             )}
                         </div>
                         <div className="text-gray-700 space-y-1 mt-4">
-                            {/* Display method in details */}
-                            {selectedOrder.processing?.deliveryMethod && (
+                            {/* Display Initial Method in details */}
+                            {selectedOrder.processing?.initialMethod && (
                                 <p className="text-gray-700">
                                     <Truck className="inline mr-1 h-4 w-4 text-gray-600" />
-                                    <strong>Method:</strong>{" "}
-                                    {selectedOrder.processing.deliveryMethod.charAt(0).toUpperCase() + selectedOrder.processing.deliveryMethod.slice(1)}
+                                    <strong>Initial Method:</strong>{" "}
+                                    {selectedOrder.processing.initialMethod.charAt(0).toUpperCase() + selectedOrder.processing.initialMethod.slice(1)}
+                                </p>
+                            )}
+                            {/* Display Fulfillment Method in details */}
+                            {selectedOrder.processing?.fulfillmentMethod && (
+                                <p className="text-gray-700">
+                                    <Truck className="inline mr-1 h-4 w-4 text-gray-600" />
+                                    <strong>Return Method:</strong>{" "}
+                                    {selectedOrder.processing.fulfillmentMethod.charAt(0).toUpperCase() + selectedOrder.processing.fulfillmentMethod.slice(1)}
                                 </p>
                             )}
                             <p className="text-gray-700">

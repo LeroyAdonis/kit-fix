@@ -1,16 +1,16 @@
-// src/admin/components/DropoffManager.tsx
 import React, { useEffect, useState } from "react";
 import {
     collection,
     getDocs,
     query,
-    where,
+    where, // Keep where
     orderBy,
     doc,
     updateDoc,
     serverTimestamp,
-    Timestamp, // Use Timestamp type
-    getDoc, // Need getDoc for updateDropoffOrder
+    Timestamp,
+    getDoc,
+    // or, // <-- Remove 'or' import
 } from "firebase/firestore";
 import { db } from "@/firebaseConfig";
 import { format } from "date-fns";
@@ -18,51 +18,73 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input"; // For search
 import {
     Hash,
-    Truck,
-    User,
-    Clock, // Or relevant icon for awaiting dropoff
-    CheckCircle, // Or relevant icon for dropped off
-    MapPin, // Icon for location
+    Truck, // Method icon
+    User, // Name icon
+    MapPin, // Location icon
+    CalendarDays, // Date icon
+    DollarSign, // Price icon
+    CreditCard, // Payment icon
+    Search, // Search icon
     Loader2, // Loading spinner
-    Package
+    ArrowRight, // Routing icon
+    Tag, // Repair Type
+    Package, // Notes
+    Clock, // In Repair icon / Status icon
+    CheckCircle // Completed icon / Picked icon
 } from "lucide-react";
 import { toast } from 'sonner';
 
-// Import the Order interface and specific statuses
-import { Order, OrderStatus, DeliveryMethod, DropoffStatus, RepairStatus } from "@/types/order";
+// Import types - Updated
+import { Order, OrderStatus, InitialMethod, FulfillmentMethod, RepairStatus, PaymentStatus } from "@/types/order";
+
+// Define filter status options for Dropoff Manager
+// This manager shows orders in the initial dropoff phase OR the final customer pickup phase
+const dropoffInitialStatuses: RepairStatus[] = [
+    "Routed to Dropoff",
+    "Item Dropped Off",
+    "Ready for Repair (from Dropoff)",
+];
+const customerPickupStatuses: RepairStatus[] = [
+    "Ready for Customer Pickup",
+    "Scheduled for Pickup (Customer)",
+    "Picked Up by Customer",
+];
+const relevantStatuses: RepairStatus[] = [...dropoffInitialStatuses, ...customerPickupStatuses];
+type DropoffFilterStatus = RepairStatus | 'all';
+
 
 const DropoffManager: React.FC = () => {
-    // Filter state for dropoff status
-    const [filterStatus, setFilterStatus] = useState<DropoffStatus | 'all'>('awaiting_dropoff'); // Default to showing orders awaiting dropoff
+    const [filterStatus, setFilterStatus] = useState<DropoffFilterStatus>('all'); // Default filter to all or an initial status
     const [orders, setOrders] = useState<Order[]>([]);
     const [loading, setLoading] = useState(true);
-    // State to track loading for updates, specific to an order ID
+    const [searchTerm, setSearchTerm] = useState(''); // State for search term
     const [isUpdatingOrderId, setIsUpdatingOrderId] = useState<string | null>(null);
 
-    // Status options for filtering (add 'all' manually)
-    const dropoffStatuses: (DropoffStatus | 'all')[] = ['all', 'awaiting_dropoff', 'dropped_off', 'ready_for_repair'];
+    // Filter statuses available for filtering
+    const statusOptions: DropoffFilterStatus[] = ['all', ...relevantStatuses];
+
 
     useEffect(() => {
         const fetchOrders = async () => {
             setLoading(true);
             try {
                 const ordersRef = collection(db, "orders");
-                // Query for orders that are in_progress and have deliveryMethod 'dropoff'
-                const q = query(
+
+                // Query to fetch ALL orders in 'in_progress' OR 'awaiting_fulfillment' status
+                // This avoids the complex `or` query syntax combining method and status.
+                // Requires index on processing.status.
+                let q = query(
                     ordersRef,
-                    where('processing.status', '==', 'in_progress' as OrderStatus), // Must be in_progress after routing
-                    where('processing.deliveryMethod', '==', 'dropoff' as DeliveryMethod),
-                    // Only apply dropoffStatus filter if not 'all'
-                    ...(filterStatus !== 'all' ? [where('processing.dropoffStatus', '==', filterStatus)] : []),
-                    orderBy("createdAt", "desc") // Order by creation date or update date
+                    where('processing.status', 'in', ['in_progress', 'awaiting_fulfillment'] as OrderStatus[]), // Fetch relevant main statuses
+                    orderBy("createdAt", "desc") // Order by creation date
                 );
 
                 const snapshot = await getDocs(q);
-                const orderData = snapshot.docs.map((d) => {
+                const fetchedOrders = snapshot.docs.map((d) => {
                     const data = d.data();
-                    // Ensure nested objects exist with defaults for safer typing
                     return {
                         id: d.id,
                         ...data,
@@ -71,7 +93,38 @@ const DropoffManager: React.FC = () => {
                         payment: data.payment || {},
                     };
                 }) as Order[];
-                setOrders(orderData);
+
+                // DEBUG: Log fetched orders before client-side filtering
+                console.log("DropoffManager: Fetched orders from Firestore (in_progress or awaiting_fulfillment):", fetchedOrders);
+
+
+                // Client-side filter to include only orders relevant to THIS MANAGER
+                // Orders must be:
+                // 1. initialMethod == 'dropoff' AND repairStatus is one of the dropoffInitialStatuses
+                // OR
+                // 2. fulfillmentMethod == 'pickup' AND repairStatus is one of the customerPickupStatuses
+                const relevantOrders = fetchedOrders.filter(order => {
+                    if (!order.processing || !order.processing.repairStatus) return false; // Must have processing & repairStatus
+
+                    const { initialMethod, fulfillmentMethod, repairStatus } = order.processing;
+
+                    // Check if it matches the criteria for the initial dropoff phase
+                    const isInitialDropoff = initialMethod === 'dropoff' && dropoffInitialStatuses.includes(repairStatus);
+
+                    // Check if it matches the criteria for the final customer pickup phase
+                    const isCustomerPickup = fulfillmentMethod === 'pickup' && customerPickupStatuses.includes(repairStatus);
+
+                    // Include the order if it matches either phase criteria
+                    return isInitialDropoff || isCustomerPickup;
+                });
+
+
+                // DEBUG: Log orders after filtering by relevance to this manager
+                console.log("DropoffManager: Filtered orders by relevance to this manager:", relevantOrders);
+
+
+                setOrders(relevantOrders); // Set the state with relevant orders
+
             } catch (error) {
                 console.error("Error fetching dropoff orders:", error);
                 toast.error("Error fetching dropoff orders", {
@@ -81,18 +134,20 @@ const DropoffManager: React.FC = () => {
                 setLoading(false);
             }
         };
-        // Re-fetch when filterStatus changes
-        fetchOrders();
-        // Add filterStatus to dependency array
-    }, [filterStatus, db]); // Added db to dependencies
 
-    // Generic update function (can be reused)
+        // Fetch orders whenever the component mounts or db changes.
+        // filterStatus and searchTerm changes are handled by client-side filtering below.
+        fetchOrders();
+        // filterStatus is needed in dependency array because it affects which orders are *relevant* after fetching
+        // Added db to dependencies (unlikely to change, but good practice)
+    }, [db]); // Dependency array - filterStatus is NOT needed here as it's client-side filtering
+
+
+    // Generic update function for dropoff orders
     const updateDropoffOrder = async (orderId: string, updates: Partial<Order>): Promise<boolean> => {
         setIsUpdatingOrderId(orderId); // Set updating state
         try {
             const orderRef = doc(db, "orders", orderId);
-            // Fetch existing to merge nested objects like processing
-            // getDoc is now imported
             const orderSnap = await getDoc(orderRef);
             const existingOrder = orderSnap.exists() ? orderSnap.data() as Order : null;
 
@@ -102,37 +157,34 @@ const DropoffManager: React.FC = () => {
                 return false;
             }
 
-            // Deep merge processing object if updates.processing exists
             const updatedProcessing = updates.processing
                 ? { ...existingOrder.processing, ...updates.processing }
-                : existingOrder.processing; // Keep existing if no processing updates
+                : existingOrder.processing;
 
-            // Create final update object
             const finalUpdates: Partial<Order> = {
-                ...updates, // Apply other updates
-                processing: updatedProcessing, // Use the merged processing
+                ...updates,
+                processing: updatedProcessing,
+                updatedAt: serverTimestamp(), // Always update timestamp
             };
 
             await updateDoc(orderRef, finalUpdates);
 
             // Optimistically update local state
             const updatedOrder = { ...existingOrder, ...finalUpdates }; // Merge locally
-            if (finalUpdates.processing) { // Ensure processing is also merged locally
-                updatedOrder.processing = { ...existingOrder.processing, ...finalUpdates.processing };
-            }
+            if (finalUpdates.processing) updatedOrder.processing = { ...existingOrder.processing, ...finalUpdates.processing };
+            if (finalUpdates.payment) updatedOrder.payment = { ...existingOrder.payment, ...finalUpdates.payment };
+
 
             setOrders((prev) =>
-                prev.map((o) => (o && o.id === orderId ? updatedOrder : o)) // <-- Added check for 'o'
+                prev.map((o) => (o && o.id === orderId ? updatedOrder : o)) // Check for 'o' safety
             );
 
-            // No toast here, let the calling function provide specific feedback
             return true;
         } catch (error) {
             console.error("Error updating dropoff order:", error);
             toast.error("Update Failed", {
                 description: `Could not update order ${orderId.slice(0, 6).toUpperCase()}.`,
             });
-            // Consider reverting local state on error (complex with optimistic updates)
             return false;
         } finally {
             setIsUpdatingOrderId(null); // Reset updating state
@@ -140,68 +192,58 @@ const DropoffManager: React.FC = () => {
     };
 
 
-    // Action: Mark order as dropped off
-    const markAsDroppedOff = async (order: Order) => {
+    // --- Actions for Initial Dropoff Phase (initialMethod === 'dropoff', status === 'in_progress') ---
+
+    // Action: Mark order as Dropped off by Customer
+    const markItemDroppedOff = async (order: Order) => {
         if (!order || !order.id || !order.processing) {
             toast.error("Action Failed", { description: "Order data is incomplete." });
             return;
         }
-
-        // Prevent marking as dropped off if it's already dropped off or beyond
-        if (order.processing.dropoffStatus !== 'awaiting_dropoff') {
+        // Check if order is in the correct phase/status
+        if (order.processing.initialMethod !== 'dropoff' || order.processing.status !== 'in_progress' || order.processing.repairStatus !== 'Routed to Dropoff') {
             toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not awaiting dropoff.`);
             return;
         }
 
-        // Updates: Change dropoffStatus and repairStatus
+        // Updates: Change repairStatus and add timestamp
         const updates: Partial<Order> = {
             processing: {
-                // Start with existing processing fields
                 ...order.processing,
-                dropoffStatus: "dropped_off" as DropoffStatus, // Set dropped off status
-                // Once dropped off, the item is now ready to enter the repair queue
-                repairStatus: "Ready for Repair (from Dropoff)" as RepairStatus, // Set main repair status for Repair Manager
-                actualDropoffDate: Timestamp.now(), // Record the actual dropoff time
+                repairStatus: "Item Dropped Off" as RepairStatus, // Set dropped off status
+                actualCustomerDropoffDate: Timestamp.now(), // Record the actual dropoff time
+                // Keep main status as 'in_progress'
             },
-            updatedAt: serverTimestamp(), // Update timestamp
         };
 
         const success = await updateDropoffOrder(order.id, updates);
-
         if (success) {
             toast.success("Order Dropped Off", {
                 description: `Order ${order.id.slice(0, 6).toUpperCase()} marked as dropped off.`,
             });
-            // The order will disappear from 'awaiting_dropoff' filter, appear under 'dropped_off' or 'all'
+            // The order will stay in this manager's view but its badge/available actions will change
         }
     };
 
-    // Action: Mark as Ready for Repair (Explicit step after dropped_off)
-    const markAsReadyForRepair = async (order: Order) => {
+    // Action: Mark as Ready for Repair (Explicit step after Item Dropped Off)
+    const markReadyForRepairFromDropoff = async (order: Order) => {
         if (!order || !order.id || !order.processing) {
             toast.error("Action Failed", { description: "Order data is incomplete." });
             return;
         }
-
-        // Prevent marking as ready if it's not dropped off or already ready for repair
-        if (order.processing.dropoffStatus !== 'dropped_off' && order.processing.dropoffStatus !== 'ready_for_repair') {
-            toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not in a state to be marked ready for repair.`);
-            return;
-        }
-        if (order.processing.dropoffStatus === 'ready_for_repair') {
-            toast.info(`Order ${order.id.slice(0, 6).toUpperCase()} is already marked ready for repair.`);
+        // Check if order is in the correct phase/status
+        if (order.processing.initialMethod !== 'dropoff' || order.processing.status !== 'in_progress' || order.processing.repairStatus !== 'Item Dropped Off') {
+            toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not ready to be sent to repair.`);
             return;
         }
 
-
-        // Updates: Change dropoffStatus and set repairStatus for Repair Manager
+        // Updates: Change repairStatus
         const updates: Partial<Order> = {
             processing: {
-                ...order.processing, // Keep existing fields
-                dropoffStatus: "ready_for_repair" as DropoffStatus, // Set as ready within dropoff flow
-                // repairStatus remains "Ready for Repair (from Dropoff)" set earlier
+                ...order.processing,
+                repairStatus: "Ready for Repair (from Dropoff)" as RepairStatus, // Set as ready within dropoff flow
+                // Keep main status as 'in_progress'
             },
-            updatedAt: serverTimestamp(),
         };
 
         const success = await updateDropoffOrder(order.id, updates);
@@ -210,13 +252,110 @@ const DropoffManager: React.FC = () => {
             toast.success("Order Ready for Repair", {
                 description: `Order ${order.id.slice(0, 6).toUpperCase()} marked as ready for repair.`,
             });
-            // The order will disappear from 'dropped_off' filter, appear under 'ready_for_repair' or 'all'
+            // The order will stay in this manager's view but its badge/available actions will change
         }
     };
 
 
+    // --- Actions for Final Customer Pickup Phase (fulfillmentMethod === 'pickup', status === 'awaiting_fulfillment') ---
+
+    // Action: Mark Ready for Customer Pickup (This status is set by RepairManager)
+    // This manager just needs to display orders in this state and provide the final action.
+
+    // Action: Mark as Scheduled for Customer Pickup (Optional step in fulfillment)
+    const markScheduledForCustomerPickup = async (order: Order, scheduleDate: string) => {
+        if (!order || !order.id || !order.processing) {
+            toast.error("Action Failed", { description: "Order data is incomplete." });
+            return;
+        }
+        // Check if order is in the correct phase/status
+        if (order.processing.fulfillmentMethod !== 'pickup' || order.processing.status !== 'awaiting_fulfillment' || order.processing.repairStatus !== 'Ready for Customer Pickup') {
+            toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not ready for customer pickup scheduling.`);
+            return;
+        }
+        if (!scheduleDate) {
+            toast.warning("Please provide a schedule date.");
+            return;
+        }
+
+        // Convert date string to Timestamp
+        const date = new Date(scheduleDate);
+        if (isNaN(date.getTime())) {
+            toast.error("Invalid date selected.");
+            return;
+        }
+        const scheduledTimestamp = Timestamp.fromDate(date);
+
+        const updates: Partial<Order> = {
+            processing: {
+                ...order.processing,
+                repairStatus: "Scheduled for Pickup (Customer)" as RepairStatus, // Update repair status
+                scheduledCustomerPickupDate: scheduledTimestamp, // Save scheduled date as Timestamp
+                // Keep main status as 'awaiting_fulfillment'
+            },
+        };
+        const success = await updateDropoffOrder(order.id, updates);
+        if (success) toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} scheduled for customer pickup.`);
+    };
+
+
+    // Action: Mark as Picked Up by Customer
+    const markPickedUpByCustomer = async (order: Order) => {
+        if (!order || !order.id || !order.processing) {
+            toast.error("Action Failed", { description: "Order data is incomplete." });
+            return;
+        }
+        // Check if status is appropriate
+        if (order.processing.fulfillmentMethod !== 'pickup' || order.processing.status !== 'awaiting_fulfillment' || (order.processing.repairStatus !== 'Ready for Customer Pickup' && order.processing.repairStatus !== 'Scheduled for Pickup (Customer)')) {
+            toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not ready to be marked as picked up by customer.`);
+            return;
+        }
+        if (order.processing.repairStatus === 'Picked Up by Customer') {
+            toast.info(`Order ${order.id.slice(0, 6).toUpperCase()} is already marked as picked up by customer.`);
+            return;
+        }
+
+
+        // Updates: Change main status and repairStatus, add timestamp
+        const updates: Partial<Order> = {
+            processing: {
+                ...order.processing,
+                status: "fulfilled" as OrderStatus, // CHANGE main status to fulfilled
+                repairStatus: "Picked Up by Customer" as RepairStatus, // Set final status
+                actualCustomerPickupDate: Timestamp.now(), // Record actual pickup time
+                // Consider clearing fulfillment specific timestamps/locations?
+                // readyForFulfillmentAt: null // Set to null to remove or clear
+            },
+        };
+        const success = await updateDropoffOrder(order.id, updates);
+        if (success) toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} marked as Picked Up by Customer and Fulfilled.`);
+    };
+
+
+    // --- Client-side Filtering and Searching ---
+    // Filter by selected RepairStatus and Search Term
+    const filteredAndSearchedOrders = orders.filter(order => {
+        // Add safety check for processing and repairStatus
+        if (!order.processing || !order.processing.repairStatus) return false;
+
+        // 1. Filter by Status
+        const statusMatch = filterStatus === 'all' || order.processing.repairStatus === filterStatus; // <--- filterStatus is used here
+
+        if (!statusMatch) return false;
+
+        // 2. Filter by Search Term
+        const lowerSearchTerm = searchTerm.toLowerCase();
+        if (lowerSearchTerm === '') return true;
+
+        const customerName = order.contactInfo?.name?.toLowerCase() || '';
+        const orderIdPartial = order.id.slice(0, 6).toLowerCase();
+
+        return customerName.includes(lowerSearchTerm) || orderIdPartial.includes(lowerSearchTerm);
+    });
+
+
     if (loading) {
-        // You can reuse the Skeleton loader from OrdersTable
+        // You can reuse the Skeleton loader structure
         return (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 {[...Array(3)].map((_, i) => (
@@ -227,122 +366,220 @@ const DropoffManager: React.FC = () => {
     }
 
     // Add debugging log before mapping
-    console.log("Rendering Dropoff Orders (after loading check):", orders);
+    console.log("DropoffManager: Rendering Filtered Orders (after loading check):", filteredAndSearchedOrders);
+
+
+    // Updated empty state message
+    let emptyMessage = "No orders found.";
+    if (filterStatus !== 'all') { // <--- filterStatus is used here
+        emptyMessage = `No "${filterStatus.replace(/_/g, ' ')}" orders found.`;
+    }
+    if (searchTerm) {
+        emptyMessage = `No orders found matching "${searchTerm}"` + (filterStatus !== 'all' ? ` with status "${filterStatus.replace(/_/g, ' ')}".` : '.'); // <--- filterStatus is used here
+    }
 
 
     return (
         <div className="space-y-6">
-            {/* Filter Controls */}
-            <div className="flex flex-wrap gap-3 mb-6">
-                {dropoffStatuses.map(status => (
-                    <Button
-                        key={status}
-                        variant={filterStatus === status ? 'default' : 'outline'}
-                        onClick={() => setFilterStatus(status)}
-                        size="sm"
-                    >
-                        {status === 'all' ? 'All Orders' : status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())} {/* Basic formatting */}
-                    </Button>
-                ))}
+            {/* Filter and Search Controls */}
+            <div className="flex flex-col sm:flex-row justify-between gap-4 mb-6">
+                <div className="flex flex-wrap gap-3">
+                    {statusOptions.map(status => (
+                        <Button
+                            key={status}
+                            variant={filterStatus === status ? 'default' : 'outline'} // <--- filterStatus is used here
+                            onClick={() => setFilterStatus(status)} // <--- setFilterStatus is used here
+                            size="sm"
+                        >
+                            {status === 'all' ? 'All Dropoff/Pickup Orders' : status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())} {/* Basic formatting */}
+                        </Button>
+                    ))}
+                </div>
+                {/* Search Input */}
+                <div className="relative w-full sm:w-auto sm:min-w-[200px]">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+                    <Input
+                        placeholder="Search by name or ID..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="pl-9 pr-3"
+                    />
+                </div>
             </div>
 
             {/* Order Cards */}
-            {orders.length === 0 ? (
-                <p className="text-center text-gray-500">No dropoff orders found for the selected status.</p>
+            {filteredAndSearchedOrders.length === 0 ? (
+                <p className="text-center text-gray-500">{emptyMessage}</p>
             ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {orders.map((order) => {
+                    {filteredAndSearchedOrders.map((order) => {
                         // Add safety check inside the map loop
-                        if (!order || !order.id) {
+                        if (!order || !order.id || !order.processing) {
                             console.warn("Skipping rendering for invalid order item:", order);
-                            return null; // Don't render if order or order.id is missing
+                            return null;
                         }
+
+                        const { initialMethod, fulfillmentMethod, repairStatus } = order.processing;
+
+                        // Determine which phase the order is in for rendering logic based on REPAIR STATUS
+                        // An order is in the initial dropoff phase if its repairStatus is one of the initial dropoff statuses
+                        const isInInitialDropoffPhase = dropoffInitialStatuses.includes(repairStatus);
+                        // An order is in the customer pickup fulfillment phase if its repairStatus is one of the customer pickup fulfillment statuses
+                        const isInCustomerPickupPhase = customerPickupStatuses.includes(repairStatus);
+                        // Note: An order should only be in ONE phase at a time based on its repairStatus
 
                         return (
                             <Card key={order.id} className="rounded-2xl shadow-md">
                                 <CardContent className="p-6 space-y-3">
-                                    {/* Display relevant order info similar to OrdersTable */}
+                                    {/* Display relevant order info */}
                                     <div className="flex justify-between items-start">
                                         <div>
                                             <h3 className="text-lg font-semibold text-jet-black">{order.contactInfo?.name || "No Name"}</h3>
                                             <p className="text-sm text-gray-500">{order.contactInfo?.email || "No Email"}</p>
                                         </div>
-                                        {/* Display the specific dropoff status */}
+                                        {/* Display the current repairStatus */}
                                         <Badge variant="outline" className="capitalize">
-                                            {order.processing?.dropoffStatus || 'Unknown Status'}
+                                            {repairStatus || 'Unknown Status'}
                                         </Badge>
                                     </div>
 
                                     <div className="flex items-center justify-between text-sm text-gray-700">
                                         <span className="flex items-center gap-1">
                                             <Hash className="h-4 w-4 text-indigo-500" />
-                                            <strong>Order #:</strong> {order.id.slice(0, 6).toUpperCase()} {/* Error line */}
+                                            <strong>Order #:</strong> {order.id.slice(0, 6).toUpperCase()}
                                         </span>
                                     </div>
 
-                                    {/* Other order details like Repair Type, Notes, etc. */}
+                                    {/* Order details */}
                                     <div className="text-sm text-gray-700 space-y-1">
-                                        <p className="text-gray-700">
-                                            <Truck className="inline mr-1 h-4 w-4 text-gray-600" />
-                                            <strong>Method:</strong> Dropoff
-                                        </p>
-                                        {/* Display Dropoff Location if available */}
-                                        {order.processing?.dropoffLocation && (
+                                        {initialMethod && (
                                             <p className="text-gray-700">
-                                                <MapPin className="inline mr-1 h-4 w-4 text-red-500" />
-                                                <strong>Location:</strong> {order.processing.dropoffLocation}
+                                                <Truck className="inline mr-1 h-4 w-4 text-gray-600" />
+                                                <strong>Initial:</strong> {initialMethod.charAt(0).toUpperCase() + initialMethod.slice(1)}
                                             </p>
                                         )}
+                                        {fulfillmentMethod && (
+                                            <p className="text-gray-700">
+                                                <Truck className="inline mr-1 h-4 w-4 text-gray-600" />
+                                                <strong>Return:</strong> {fulfillmentMethod.charAt(0).toUpperCase() + fulfillmentMethod.slice(1)}
+                                            </p>
+                                        )}
+                                        <p className="text-gray-700">
+                                            <Tag className="inline mr-1 h-4 w-4 text-blue-500" />
+                                            <strong>Repair:</strong> {order.repairDescription || order.repairType || "N/A"}
+                                        </p>
                                         {order.notes && (
                                             <p className="text-gray-700">
                                                 <Package className="inline mr-1 h-4 w-4 text-blue-500" />
                                                 <strong>Notes:</strong> {order.notes}
                                             </p>
                                         )}
+                                        {/* Add more relevant details like preferredDate, locations, timestamps etc. */}
                                         {order.processing?.preferredDate && (
                                             <p className="text-gray-700">
+                                                <CalendarDays className="inline mr-1 h-4 w-4 text-purple-500" />
                                                 <strong>Preferred Date:</strong> {order.processing.preferredDate}
                                             </p>
                                         )}
-                                        {order.processing?.actualDropoffDate?.seconds && (
+                                        {/* Show relevant locations based on method and phase */}
+                                        {isInInitialDropoffPhase && order.processing?.customerDropoffLocation && (
                                             <p className="text-gray-700">
+                                                <MapPin className="inline mr-1 h-4 w-4 text-red-500" />
+                                                <strong>Dropoff Location:</strong> {order.processing.customerDropoffLocation}
+                                            </p>
+                                        )}
+                                        {isInCustomerPickupPhase && order.processing?.customerPickupLocation && (
+                                            <p className="text-gray-700">
+                                                <MapPin className="inline mr-1 h-4 w-4 text-red-500" />
+                                                <strong>Pickup Location:</strong> {order.processing.customerPickupLocation}
+                                            </p>
+                                        )}
+                                        {/* Show relevant timestamps */}
+                                        {order.processing?.actualCustomerDropoffDate?.seconds && (
+                                            <p className="text-gray-700">
+                                                <CalendarDays className="inline mr-1 h-4 w-4 text-blue-500" />
                                                 <strong>Actual Dropoff:</strong>{' '}
-                                                {format(new Date(order.processing.actualDropoffDate.seconds * 1000), "dd MMM yyyy HH:mm")}
+                                                {format(new Date(order.processing.actualCustomerDropoffDate.seconds * 1000), "dd MMM yyyy HH:mm")}
+                                            </p>
+                                        )}
+                                        {order.processing?.actualCustomerPickupDate?.seconds && (
+                                            <p className="text-gray-700">
+                                                <CalendarDays className="inline mr-1 h-4 w-4 text-green-500" />
+                                                <strong>Actual Pickup:</strong>{' '}
+                                                {format(new Date(order.processing.actualCustomerPickupDate.seconds * 1000), "dd MMM yyyy HH:mm")}
                                             </p>
                                         )}
                                     </div>
 
-
-                                    {/* Actions based on current dropoff status */}
-                                    <div className="mt-4 flex justify-end gap-2">
-                                        {/* Button to mark as Dropped Off */}
-                                        {order.processing?.dropoffStatus === 'awaiting_dropoff' && (
-                                            <Button
-                                                size="sm"
-                                                onClick={() => markAsDroppedOff(order)}
-                                                disabled={isUpdatingOrderId === order.id} // Disable only the button for this order
-                                            >
-                                                {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                                Mark as Dropped Off
-                                            </Button>
+                                    {/* --- Actions --- */}
+                                    <div className="mt-4 flex flex-wrap justify-end gap-2">
+                                        {/* Actions for Initial Dropoff Phase */}
+                                        {isInInitialDropoffPhase && (
+                                            <>
+                                                {repairStatus === 'Routed to Dropoff' && (
+                                                    <Button
+                                                        size="sm"
+                                                        onClick={() => markItemDroppedOff(order)}
+                                                        disabled={isUpdatingOrderId === order.id}
+                                                    >
+                                                        {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                                        Mark Item Dropped Off
+                                                    </Button>
+                                                )}
+                                                {repairStatus === 'Item Dropped Off' && (
+                                                    <Button
+                                                        size="sm"
+                                                        variant="secondary"
+                                                        onClick={() => markReadyForRepairFromDropoff(order)}
+                                                        disabled={isUpdatingOrderId === order.id}
+                                                    >
+                                                        {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                                        Mark Ready for Repair
+                                                    </Button>
+                                                )}
+                                                {repairStatus === 'Ready for Repair (from Dropoff)' && (
+                                                    <Badge variant="default" className="capitalize">Ready for Repair</Badge>
+                                                )}
+                                            </>
                                         )}
 
-                                        {/* Button to mark as Ready for Repair (Explicit step after dropped_off) */}
-                                        {/* Assuming markAsDroppedOff already sets it to 'Ready for Repair (from Dropoff)' repairStatus */}
-                                        {order.processing?.dropoffStatus === 'dropped_off' && (
-                                            <Button
-                                                size="sm"
-                                                variant="secondary" // Use a different variant
-                                                onClick={() => markAsReadyForRepair(order)}
-                                                disabled={isUpdatingOrderId === order.id}
-                                            >
-                                                {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                                Mark Ready for Repair
-                                            </Button>
+                                        {/* Actions for Final Customer Pickup Phase */}
+                                        {isInCustomerPickupPhase && (
+                                            <>
+                                                {repairStatus === 'Ready for Customer Pickup' && (
+                                                    <>
+                                                        {/* Optional: Schedule pickup step */}
+                                                        {/* <Input type="date" className="w-auto sm:w-auto min-w-[120px]" onChange={(e) => {}} /> */}
+                                                        {/* <Button size="sm" variant="secondary" onClick={() => markScheduledForCustomerPickup(order, 'date')} disabled={isUpdatingOrderId === order.id}>
+                                                               Schedule Pickup
+                                                              </Button> */}
+                                                        <Button
+                                                            size="sm"
+                                                            variant="default"
+                                                            onClick={() => markPickedUpByCustomer(order)}
+                                                            disabled={isUpdatingOrderId === order.id}
+                                                        >
+                                                            {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                                            Mark Picked Up
+                                                        </Button>
+                                                    </>
+                                                )}
+                                                {repairStatus === 'Scheduled for Pickup (Customer)' && (
+                                                    <Button
+                                                        size="sm"
+                                                        variant="default"
+                                                        onClick={() => markPickedUpByCustomer(order)}
+                                                        disabled={isUpdatingOrderId === order.id}
+                                                    >
+                                                        {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                                        Mark Picked Up
+                                                    </Button>
+                                                )}
+                                                {repairStatus === 'Picked Up by Customer' && (
+                                                    <Badge variant="default" className="capitalize">Picked Up</Badge>
+                                                )}
+                                            </>
                                         )}
-
-                                        {/* Maybe a View Details button similar to OrdersTable (Optional) */}
-                                        {/* You could implement a similar dialog here if needed */}
                                     </div>
                                 </CardContent>
                             </Card>

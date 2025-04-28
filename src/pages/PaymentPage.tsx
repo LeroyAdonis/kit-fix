@@ -1,19 +1,13 @@
-import { setDoc, collection, updateDoc, doc, Timestamp, serverTimestamp, getDoc } from 'firebase/firestore'; // Import serverTimestamp and getDoc
+import { setDoc, collection, updateDoc, doc, Timestamp, serverTimestamp, getDoc } from 'firebase/firestore';
 import { auth, db } from '@/firebaseConfig';
-// Use sonner toast - Remove shadcn useToast
-// import { useToast } from "@/hooks/use-toast"; // REMOVE THIS
 import { toast } from 'sonner'; // Use sonner
-
-// Remove Shadcn form components if not actually using them for validation/state management here
-// import { Form, FormItem, FormLabel, FormControl } from "@/components/ui/form"; // REMOVE IF NOT USED
-// import { FormProvider, useForm } from 'react-hook-form'; // REMOVE IF NOT USED
 
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 
-// Import types
-import { Order, OrderStatus, PaymentStatus, RepairStatus, DeliveryMethod, PickupStatus, DropoffStatus, DeliveryStatus, ContactInfo, ProcessingInfo, PaymentInfo } from '@/types/order';
+// Import types - Ensure all types are imported
+import { Order, OrderStatus, PaymentStatus, RepairStatus, InitialMethod, FulfillmentMethod, ProcessingInfo, ContactInfo } from '@/types/order';
 import Footer from '@/components/Footer';
 import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
@@ -31,14 +25,11 @@ const PaymentPage = () => {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
 
-    // Remove react-hook-form specific state/hooks if not actively used for the payment form fields
-    // const methods = useForm(); // REMOVE THIS
-    // const { setValue } = methods; // REMOVE THIS
-
     const [user] = useAuthState(auth);
     const [isLoading, setIsLoading] = useState(false); // Loading for Paystack initiation/payment process
 
     // State to hold the consolidated order data for display and payment
+    // This state should ideally mirror the Firestore document structure as much as possible
     const [finalOrderData, setFinalOrderData] = useState<Order | null>(null);
     const [finalOrderId, setFinalOrderId] = useState<string | null>(null);
     const [pageLoading, setPageLoading] = useState(true); // Loading for initial data fetch
@@ -65,7 +56,7 @@ const PaymentPage = () => {
 
                 if (orderSnap.exists()) {
                     const orderData = orderSnap.data() as Order; // Cast fetched data
-                    setFinalOrderData(orderData);
+                    setFinalOrderData(orderData); // Set the state with fetched data
 
                     // If order is already paid, redirect to confirmation
                     if (orderData.payment?.status === 'paid') {
@@ -75,17 +66,21 @@ const PaymentPage = () => {
                         return; // Stop further execution
                     }
 
-                    // Check if required data from previous steps is present (optional but good)
-                    if (!orderData.repairType || !orderData.price || !orderData.contactInfo || !orderData.processing?.deliveryMethod) {
+                    // Check if required data from previous steps is present
+                    // Check for essential fields set in Quote and Schedule steps
+                    if (!orderData.repairType || !orderData.price || !orderData.contactInfo?.name || !orderData.processing?.initialMethod || !orderData.processing?.fulfillmentMethod) {
+                        console.warn("Fetched order is missing essential details for payment:", orderData);
                         toast.warning("Missing order details. Please revisit previous steps.");
-                        // Decide where to redirect - maybe schedule-service?
+                        // Redirect to the earliest step likely missing data (ScheduleService)
+                        // If ScheduleService is the step that saves methods, redirect there.
                         navigate(`/schedule-service?orderId=${orderIdFromParams}`);
                         setPageLoading(false); // Stop loading before redirect
                         return; // Stop further execution
                     }
 
                 } else {
-                    // Order ID from params not found in DB
+                    // Order ID from params not found in DB - This indicates a problem in previous steps
+                    console.error("Order ID not found in database:", orderIdFromParams);
                     toast.error("Order not found. Please restart the repair process.");
                     navigate("/dashboard"); // Redirect to a safe page
                 }
@@ -98,8 +93,9 @@ const PaymentPage = () => {
         };
 
         loadOrderData();
-        // Add searchParams and navigate to dependency array
-    }, [searchParams, navigate]);
+        // Add dependencies: searchParams, navigate
+        // Depend on db as well, though unlikely to change
+    }, [searchParams, navigate, db]);
 
 
     // Function called by Paystack on successful payment
@@ -107,40 +103,68 @@ const PaymentPage = () => {
         // setIsLoading(true); // Loading is already true from handlePaystack
 
         if (!user) {
-            toast.error("User not authenticated."); // Use sonner toast
-            // setIsLoading(false); // Ensure loading is off
-            return; // Exit early
+            toast.error("User not authenticated.");
+            // setIsLoading(false); // Ensure loading is off on error
+            return;
         }
         if (!finalOrderId) {
-            toast.error("Order ID missing after payment."); // Use sonner toast
-            // setIsLoading(false); // Ensure loading is off
-            return; // Exit early
+            toast.error("Order ID missing after payment.");
+            // setIsLoading(false); // Ensure loading is off on error
+            return;
         }
+        // Use existingData for the update, as it's the most recent state from Firestore
+        // finalOrderData is for display, but might be slightly older if updates happen elsewhere.
+        // However, since this is a critical update, let's re-fetch one last time for safety or rely on existingOrderData from Paystack call
+        // Let's rely on the existingData fetched right before the Paystack call in handlePaystack
+        // We need existingData here, but it's only available in handlePaystack's try block.
+        // A more robust pattern passes necessary data to handlePaymentSuccess.
+        // For now, let's assume finalOrderData is sufficiently up-to-date OR re-fetch.
+        // Re-fetching is safer but adds latency. Using finalOrderData might be acceptable post-payment if the only change is payment status.
+        // Let's use finalOrderData as it's the current state the user sees.
+
+        if (!finalOrderData) {
+            toast.error("Order data missing for payment success update.");
+            // setIsLoading(false); // Ensure loading is off on error
+            navigate("/dashboard"); // Or handle error state
+            return;
+        }
+
 
         try {
             const orderRef = doc(db, "orders", finalOrderId);
 
-            // Update the order document with payment details
+            // Fetch existing data just to be absolutely sure (optional but robust)
+            // const orderSnap = await getDoc(orderRef);
+            // const existingOrderData = orderSnap.exists() ? orderSnap.data() as Order : null;
+            // if (!existingOrderData) { ... handle error ... }
+            // const sourceData = existingOrderData || finalOrderData; // Use fetched data if available
+
+
+            // Only update payment and potentially the customer-facing top-level status.
+            // Do NOT change processing.status or repairStatus here.
+            // ContactInfo.address should be saved in ScheduleService.
+
             const updates: Partial<Order> = {
                 payment: {
-                    // Assuming payment object exists from initial creation
-                    amount: finalOrderData?.price || 0, // Use the correct price
+                    // Use data from finalOrderData state for amount, but merge with potential existing payment info
+                    ...(finalOrderData.payment || {}), // Use finalOrderData's payment object as base
+                    amount: finalOrderData.price, // Use price saved from quote (from finalOrderData)
                     reference: reference,
                     status: "paid" as PaymentStatus,
                     method: "Paystack", // Or get dynamically
                     paidAt: Timestamp.now(),
                 },
-                // DO NOT update processing.status or repairStatus here - they are for admin workflow
-                // You might update a customer-facing status field if you have one separate from processing.status
-                // e.g., customerFacingStatus: "paid"
+                // Keep other fields as they are in finalOrderData state.
+                // Do NOT touch processing.status or repairStatus here.
 
                 updatedAt: serverTimestamp(), // Always update timestamp
             };
 
+            // Perform the update
             await updateDoc(orderRef, updates);
 
 
-            toast.success("Payment successful!", { description: "Your order has been placed." }); // Use sonner toast
+            toast.success("Payment successful!", { description: "Your order has been placed." });
 
             // Clean up localStorage items related to the order process flow on successful payment
             localStorage.removeItem('kitfix-order');
@@ -155,7 +179,7 @@ const PaymentPage = () => {
 
         } catch (error) {
             console.error("Error saving order after payment:", error);
-            toast.error("Something went wrong", { description: "We couldn't update your order status after payment." }); // Use sonner toast
+            toast.error("Something went wrong", { description: "We couldn't update your order status after payment." });
             // Important: If the database update fails but payment succeeded, you have a discrepancy!
             // You need a way to reconcile this (e.g., webhook from Paystack, manual check, retry mechanism).
             // For now, log the error and show a user message.
@@ -167,18 +191,18 @@ const PaymentPage = () => {
     // Function to initiate Paystack payment
     const handlePaystack = async () => {
         if (!user) {
-            toast.error("You must be logged in to pay."); // Use sonner toast
+            toast.error("You must be logged in to pay.");
             return;
         }
-        // Ensure we have final order data for price, email, etc.
+        // Ensure we have final order data for display, but use fresh data for Paystack metadata
         if (!finalOrderData || !finalOrderId) {
-            toast.error("Order data is missing. Please refresh the page."); // Use sonner toast
+            toast.error("Order data is missing. Please refresh the page.");
             return;
         }
         // Ensure payment status is not already paid
         if (finalOrderData.payment?.status === 'paid') {
-            toast.info("This order is already paid."); // Use sonner toast
-            navigate(`/confirmation/${finalOrderId}`); // Redirect to confirmation
+            toast.info("This order is already paid.");
+            navigate(`/confirmation/${finalOrderId}`);
             return;
         }
         // Ensure price is valid
@@ -187,149 +211,96 @@ const PaymentPage = () => {
             console.error("Invalid order price:", finalOrderData.price);
             return;
         }
+        // Ensure initialMethod and fulfillmentMethod are set
+        if (!finalOrderData.processing?.initialMethod || !finalOrderData.processing?.fulfillmentMethod) {
+            toast.error("Order is missing initial or fulfillment method. Please go back to scheduling.");
+            // Navigate back to schedule service
+            navigate(`/schedule-service?orderId=${finalOrderId}`);
+            return;
+        }
 
 
         setIsLoading(true); // Start loading for Paystack initiation
 
         try {
-            // Ensure order document exists before initiating payment
-            const orderRef = doc(db, "orders", finalOrderId);
-            const orderSnap = await getDoc(orderRef);
+            const orderId = finalOrderId;
+            const orderRef = doc(db, "orders", orderId); // Assume order always exists at this point (created in UploadPhotos)
 
-            let orderExists = orderSnap.exists();
+            // Fetch existing data to get the most accurate and complete order document
+            const existingSnap = await getDoc(orderRef);
+            const existingData = existingSnap.exists() ? existingSnap.data() as Order : null;
 
-            // --- IF the order document doesn't exist yet, create it here ---
-            // This handles cases where the user might jump directly or localStorage was cleared
-            if (!orderExists) {
-                console.warn(`Order document ${finalOrderId} not found before payment. Creating it now.`);
-                // Use data retrieved earlier or from localStorage if available as a fallback
-                // Ideally, re-fetch necessary data from previous steps if possible, but localStorage might be the only source here.
-                // This fallback structure MUST align with your Order type and admin expectations.
-                const fallbackOrderData = localStorage.getItem("orderData") ? JSON.parse(localStorage.getItem("orderData")!) : null; // Use orderData from localStorage as fallback
-
-                if (!fallbackOrderData) {
-                    toast.error("Critical order data missing. Cannot create order.");
-                    setIsLoading(false);
-                    navigate("/dashboard"); // Redirect to start
-                    return;
-                }
-
-                const initialOrderDoc: Omit<Order, 'id'> = {
-                    userId: user.uid,
-                    contactInfo: {
-                        name: fallbackOrderData.name || "",
-                        email: fallbackOrderData.email || "",
-                        phone: fallbackOrderData.phone || "",
-                        // Address saved in contactInfo if delivery method was delivery
-                        address: fallbackOrderData.deliveryMethod === 'delivery' ? (fallbackOrderData.deliveryAddress || "") : undefined, // Use undefined if not delivery
-                    },
-                    repairType: fallbackOrderData.selectedOption || fallbackOrderData.repairType || "", // Use the ID from GetQuote
-                    repairDescription: fallbackOrderData.selectedOption?.description || fallbackOrderData.repairDescription || "", // Get description
-                    price: fallbackOrderData.price || 0,
-                    notes: fallbackOrderData.additionalNotes || fallbackOrderData.notes || "",
-
-                    // --- Essential Processing Fields for Admin Queries ---
-                    processing: {
-                        status: "pending" as OrderStatus, // <-- Initial status for OrdersTable query
-                        repairStatus: "Pending Routing" as RepairStatus, // <-- Initial status before admin routes
-
-                        deliveryMethod: fallbackOrderData.deliveryMethod || "" as DeliveryMethod, // <-- Method from ScheduleService
-
-
-                        // Set initial method-specific statuses based on the chosen method
-                        dropoffStatus: fallbackOrderData.deliveryMethod === 'dropoff' ? "awaiting_dropoff" as DropoffStatus : undefined,
-                        pickupStatus: fallbackOrderData.deliveryMethod === 'pickup' ? "awaiting_pickup" as PickupStatus : undefined,
-                        deliveryStatus: fallbackOrderData.deliveryMethod === 'delivery' ? "awaiting_delivery" as DeliveryStatus : undefined,
-
-                        duration: fallbackOrderData.duration || "",
-                        preferredDate: fallbackOrderData.preferredDate || "", // Customer's preferred date string
-
-
-                        // Placeholder locations
-                        dropoffLocation: fallbackOrderData.deliveryMethod === 'dropoff' ? "KitFix Store Address" : undefined,
-                        pickupLocation: fallbackOrderData.deliveryMethod === 'pickup' ? "KitFix Store Address" : undefined,
-                        // deliveryAddress is in contactInfo
-                    },
-                    // --- End Essential Processing Fields ---
-                    payment: {
-                        amount: fallbackOrderData.price || 0,
-                        status: "unpaid" as PaymentStatus, // Initially unpaid
-                        method: null,
-                        reference: null,
-                        paidAt: null,
-                    },
-                    createdAt: Timestamp.now(),
-                    updatedAt: Timestamp.now(),
-                    // Add photos if available in fallback data
-                    photos: fallbackOrderData.photos || undefined,
-                    stepCompleted: ''
-                };
-
-                // Clean up undefined fields before setting
-                Object.keys(initialOrderDoc).forEach(key =>
-                    (initialOrderDoc as any)[key] === undefined && delete (initialOrderDoc as any)[key]
-                );
-                if (initialOrderDoc.contactInfo) Object.keys(initialOrderDoc.contactInfo).forEach(key => (initialOrderDoc.contactInfo as any)[key] === undefined && delete (initialOrderDoc.contactInfo as any)[key]);
-                if (initialOrderDoc.processing) Object.keys(initialOrderDoc.processing).forEach(key => (initialOrderDoc.processing as any)[key] === undefined && delete (initialOrderDoc.processing as any)[key]);
-                if (initialOrderDoc.payment) Object.keys(initialOrderDoc.payment).forEach(key => (initialOrderDoc.payment as any)[key] === undefined && delete (initialOrderDoc.payment as any)[key]);
-
-
-                // Set the document with the determined finalOrderId
-                await setDoc(orderRef, initialOrderDoc);
-                orderExists = true; // Mark as exists now
-
-                toast.info("Created missing order document before payment."); // Inform user/developer
-
-            }
-            // --- END IF order document doesn't exist ---
-
-
-            // Initiate Paystack ONLY if the order document exists
-            if (orderExists) {
-                const paystack = (window as any).PaystackPop.setup({
-                    key: publicKey, // Use environment variable
-                    email: finalOrderData.contactInfo?.email, // Use email from fetched data
-                    amount: finalOrderData.price * 100, // Use price from fetched data (in kobo/cents)
-                    currency: "ZAR",
-                    metadata: {
-                        orderId: finalOrderId, // Pass orderId in metadata
-                        // Pass other details for context
-                        name: finalOrderData.contactInfo?.name,
-                        phone: finalOrderData.contactInfo?.phone,
-                        email: finalOrderData.contactInfo?.email,
-                        deliveryMethod: finalOrderData.processing?.deliveryMethod,
-                        repairType: finalOrderData.repairType,
-                        price: finalOrderData.price,
-                    },
-                    callback: (response: any) => {
-                        console.log("Paystack callback received:", response);
-                        // Call success handler with the reference
-                        handlePaymentSuccess(response.reference);
-                        // Loading state is handled in handlePaymentSuccess's finally
-                    },
-                    onClose: () => {
-                        toast.info("Payment cancelled", { description: "You closed the payment window." }); // Use sonner toast
-                        setIsLoading(false); // Turn off loading here
-                    },
-                });
-
-                paystack.openIframe();
-            } else {
-                // Should not happen if creation logic is correct, but as a fallback
-                toast.error("Could not confirm order existence. Cannot initiate payment.");
+            if (!existingData) {
+                toast.error("Critical error: Order not found before payment initiation.");
                 setIsLoading(false);
+                navigate("/dashboard"); // Redirect to a safe page
+                return;
             }
+
+            // Update the existing order document just before initiating Paystack
+            // Primary update: set payment status to "unpaid" (in case user restarts payment)
+            // Also update the stepCompleted field.
+            const updates: Partial<Order> = {
+                payment: {
+                    ...(existingData.payment || {}), // Start with existing payment info
+                    amount: existingData.price, // Use price from Firestore (most reliable)
+                    status: "unpaid" as PaymentStatus, // Set status to unpaid before initiating payment
+                    // method, reference, paidAt will be set in handlePaymentSuccess
+                },
+                stepCompleted: 'payment_initiated', // Indicate payment process started
+                updatedAt: serverTimestamp(), // Update timestamp
+            };
+
+            // Perform the update
+            await updateDoc(orderRef, updates);
+
+            // Initiate Paystack using the orderId and data from existingData (most reliable)
+            const paystack = (window as any).PaystackPop.setup({
+                key: publicKey, // Use environment variable
+                email: existingData.contactInfo?.email || existingData.userId, // Use email from fetched data or user ID
+                amount: (existingData.price || 0) * 100, // Use price from fetched data (in kobo/cents)
+                currency: "ZAR",
+                metadata: {
+                    orderId: orderId, // Pass orderId in metadata
+                    // Pass other details for context from fetched data (existingData is reliable)
+                    name: existingData.contactInfo?.name,
+                    phone: existingData.contactInfo?.phone,
+                    email: existingData.contactInfo?.email,
+                    // Use the methods from the fetched data
+                    initialMethod: existingData.processing?.initialMethod,
+                    fulfillmentMethod: existingData.processing?.fulfillmentMethod,
+                    repairType: existingData.repairType,
+                    price: existingData.price,
+                    // Add addresses/locations to metadata if useful
+                    customerAddress: existingData.contactInfo?.address, // Customer's main address
+                    dropoffLocation: existingData.processing?.customerDropoffLocation, // Store dropoff address
+                    initialPickupLocation: existingData.processing?.initialPickupLocation, // KitFix pickup address from customer
+                    customerPickupLocation: existingData.processing?.customerPickupLocation, // Customer pickup address from store
+                    kitFixDeliveryAddress: existingData.processing?.kitFixDeliveryAddress, // KitFix delivery address to customer
+                },
+                callback: (response: any) => {
+                    console.log("Paystack callback received:", response);
+                    handlePaymentSuccess(response.reference);
+                },
+                onClose: () => {
+                    toast.info("Payment cancelled", { description: "You closed the payment window." });
+                    setIsLoading(false);
+                },
+            });
+
+            paystack.openIframe();
 
 
         } catch (error) {
-            console.error("Error initiating payment or creating/updating order:", error);
-            toast.error("Payment Failed", { description: "Could not initiate payment. Please check console." }); // Use sonner toast
-            setIsLoading(false); // Turn off loading on error
+            console.error("Error initiating payment or updating order status to unpaid:", error);
+            toast.error("Payment Failed", { description: "Could not initiate payment. Please check console." });
+            setIsLoading(false);
         }
     };
 
     // No form fields to handle changes for in this view if it's just review
     // const handleInputChange = (field: string, value: any) => { ... }; // REMOVE IF NOT USED
+
 
     // Show page loading state
     if (pageLoading) {
@@ -380,12 +351,21 @@ const PaymentPage = () => {
                                     <strong>Phone:</strong> {finalOrderData.contactInfo?.phone || 'N/A'}
                                 </div>
 
-                                {/* Display address if it exists */}
+                                {/* Display address if it exists in contactInfo */}
+                                {/* Show contactInfo.address as the primary address */}
                                 {finalOrderData.contactInfo?.address && (
                                     <div>
                                         <strong>Address:</strong> {finalOrderData.contactInfo.address}
                                     </div>
                                 )}
+                                {/* kitFixDeliveryAddress might be redundant now if address is always contactInfo.address for delivery fulfillment */}
+                                {/* If it serves a different purpose (e.g., verified delivery address), keep it */}
+                                {/* {finalOrderData.processing?.kitFixDeliveryAddress && (
+                                    <div>
+                                        <strong>Delivery Address:</strong> {finalOrderData.processing.kitFixDeliveryAddress}
+                                    </div>
+                                )} */}
+
 
                                 <div>
                                     <strong>Repair Type:</strong> {finalOrderData.repairDescription || finalOrderData.repairType || 'N/A'} {/* Show description if available */}
@@ -399,10 +379,20 @@ const PaymentPage = () => {
                                     </div>
                                 )}
 
-                                <div>
-                                    <strong>Delivery Method:</strong>{" "}
-                                    {finalOrderData.processing?.deliveryMethod ? finalOrderData.processing.deliveryMethod.charAt(0).toUpperCase() + finalOrderData.processing.deliveryMethod.slice(1) : 'N/A'}
-                                </div>
+                                {/* Display Initial and Fulfillment Methods */}
+                                {finalOrderData.processing?.initialMethod && (
+                                    <div>
+                                        <strong>Initial Method:</strong>{" "}
+                                        {finalOrderData.processing.initialMethod.charAt(0).toUpperCase() + finalOrderData.processing.initialMethod.slice(1)}
+                                    </div>
+                                )}
+                                {finalOrderData.processing?.fulfillmentMethod && (
+                                    <div>
+                                        <strong>Return Method:</strong>{" "}
+                                        {finalOrderData.processing.fulfillmentMethod.charAt(0).toUpperCase() + finalOrderData.processing.fulfillmentMethod.slice(1)}
+                                    </div>
+                                )}
+
 
                                 {/* Display Preferred Date */}
                                 {finalOrderData.processing?.preferredDate && (

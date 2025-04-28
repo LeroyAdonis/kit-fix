@@ -39,33 +39,30 @@ import {
 import { toast } from 'sonner';
 
 // Import types
-import { Order, OrderStatus, DeliveryMethod, DropoffStatus, PickupStatus, DeliveryStatus, RepairStatus } from "@/types/order";
+import { Order, OrderStatus, InitialMethod, FulfillmentMethod, RepairStatus, PaymentStatus } from "@/types/order";
 
 // Define filter status options for Repair Manager
+// These are the statuses an order is *in* while being managed by the Repair Manager
 const repairProcessStatuses: RepairStatus[] = [
-    "Sent to Repair Manager",
-    "Ready for Repair (from Dropoff)",
+    "Sent to Repair Manager",           // Arriving from OrdersTable (pickup/delivery)
+    "Ready for Repair (from Dropoff)",  // Arriving from DropoffManager
+    "Ready for Repair (from Pickup)",   // Arriving from PickupScheduler
     "Assigned",
     "In Repair",
-    "Repair Completed",
+    "Repair Completed",                 // Final status in THIS manager's view
 ];
-// Added fulfillment statuses to include in 'all' view in Repair Manager if needed
-const fulfillmentStatuses: RepairStatus[] = ["Ready for Pickup", "Ready for Delivery", "Out for Delivery"];
 
-// Include fulfillment statuses in the filter options if you want to see them here
-// type RepairFilterStatus = RepairStatus | 'all'; // Keep original if only showing repair process
-type RepairFilterStatus = RepairStatus | 'all' | 'Ready for Pickup' | 'Ready for Delivery'; // Added Ready for Pickup/Delivery
+// Statuses available for filtering in the UI of THIS manager
+type RepairFilterStatus = RepairStatus | 'all';
+const statusOptions: RepairFilterStatus[] = ['all', ...repairProcessStatuses]; // Filter only by statuses relevant to the repair process
 
 
 const RepairManager: React.FC = () => {
     const [orders, setOrders] = useState<Order[]>([]);
     const [loading, setLoading] = useState(true);
-    const [filterStatus, setFilterStatus] = useState<RepairFilterStatus>('Sent to Repair Manager'); // Default filter
+    const [filterStatus, setFilterStatus] = useState<RepairFilterStatus>('all'); // Default filter to 'all' or an initial state
     const [searchTerm, setSearchTerm] = useState(''); // State for search term
     const [isUpdatingOrderId, setIsUpdatingOrderId] = useState<string | null>(null);
-
-    // Repair statuses available for filtering - Updated to include fulfillment states
-    const statusOptions: RepairFilterStatus[] = ['all', ...repairProcessStatuses, 'Ready for Pickup', 'Ready for Delivery'];
 
 
     useEffect(() => {
@@ -74,15 +71,15 @@ const RepairManager: React.FC = () => {
             try {
                 const ordersRef = collection(db, "orders");
 
-                // Query for orders that are 'in_progress' or 'awaiting_fulfillment'
-                // Firestore workaround: Fetch all 'in_progress' + 'awaiting_fulfillment' and filter client-side
-                // If the total number of orders in these states is too large, this approach needs rethinking.
+                // Query to fetch orders that are IN_PROGRESS
+                // Orders routed from OrdersTable (pickup/delivery) or DropoffManager (after dropoff/ready for repair) are in_progress.
+                // Orders routed *to* fulfillment are awaiting_fulfillment.
+                // So, fetch orders in_progress.
                 let q = query(
                     ordersRef,
-                    where('processing.status', 'in', ['in_progress', 'awaiting_fulfillment'] as OrderStatus[]), // Fetch orders in both states
+                    where('processing.status', '==', 'in_progress' as OrderStatus), // Fetch orders in_progress
                     orderBy("createdAt", "desc")
                 );
-
 
                 const snapshot = await getDocs(q);
                 const fetchedOrders = snapshot.docs.map((d) => {
@@ -96,12 +93,18 @@ const RepairManager: React.FC = () => {
                     };
                 }) as Order[];
 
-                // Client-side filtering for statuses relevant to Repair OR Fulfillment Manager VIEWS
-                // This manager VIEW should show orders that are *in* the repair process OR *ready for* fulfillment
-                const relevantRepairAndFulfillmentStatuses = [...repairProcessStatuses, ...fulfillmentStatuses]; // Combine relevant statuses
+                // DEBUG: Log fetched orders from Firestore
+                console.log("RepairManager: Fetched orders from Firestore (in_progress):", fetchedOrders);
+
+
+                // Client-side filter to include only orders whose repairStatus is in repairProcessStatuses
+                // This ensures only orders that are actively in the repair manager's workflow are displayed.
                 const relevantOrders = fetchedOrders.filter(order =>
-                    order.processing?.repairStatus && relevantRepairAndFulfillmentStatuses.includes(order.processing.repairStatus)
+                    order.processing?.repairStatus && repairProcessStatuses.includes(order.processing.repairStatus)
                 );
+
+                // DEBUG: Log orders after filtering by relevantStatuses
+                console.log("RepairManager: Filtered orders by relevantStatuses:", relevantOrders);
 
 
                 setOrders(relevantOrders); // Set the state with relevant orders
@@ -117,7 +120,7 @@ const RepairManager: React.FC = () => {
         };
 
         // Fetch orders whenever the component mounts or db changes.
-        // Note: Filtering/searching is now client-side, so no refetch needed for filter/search term changes.
+        // Filter/search are client-side, so no refetch needed for filter/search term changes.
         fetchOrders();
     }, [db]); // Dependency array
 
@@ -137,12 +140,10 @@ const RepairManager: React.FC = () => {
                 return false;
             }
 
-            // Deep merge processing object if updates.processing exists
             const updatedProcessing = updates.processing
                 ? { ...existingOrder.processing, ...updates.processing }
-                : existingOrder.processing; // Keep existing if no processing updates
+                : existingOrder.processing;
 
-            // Create final update object
             const finalUpdates: Partial<Order> = {
                 ...updates, // Apply other updates
                 processing: updatedProcessing, // Use the merged processing
@@ -152,31 +153,47 @@ const RepairManager: React.FC = () => {
             await updateDoc(orderRef, finalUpdates);
 
             // Optimistically update local state
-            const updatedOrder = { ...existingOrder, ...finalUpdates }; // Merge locally
-            if (finalUpdates.processing) { // Ensure processing is also merged locally
-                updatedOrder.processing = { ...existingOrder.processing, ...finalUpdates.processing };
-            }
-            // Also merge other top-level updates like payment
-            if (finalUpdates.payment) {
-                updatedOrder.payment = { ...existingOrder.payment, ...finalUpdates.payment };
-            }
+            // If the update changes the status OUT of repairProcessStatuses (e.g., routes to fulfillment), remove it.
+            // Otherwise, update it in place.
+            const updatedRepairStatus = finalUpdates.processing?.repairStatus || existingOrder.processing?.repairStatus;
+            const shouldRemoveFromView = updatedRepairStatus && !repairProcessStatuses.includes(updatedRepairStatus);
 
 
             setOrders((prev) =>
-                prev.map((o) => (o && o.id === orderId ? updatedOrder : o)) // Check for 'o' safety
+                shouldRemoveFromView
+                    ? prev.filter(o => o.id !== orderId) // Remove if routed out of this view
+                    : prev.map((o) => { // Update in place otherwise
+                        if (o && o.id === orderId) {
+                            // Apply all the updates locally
+                            const updatedOrder = { ...o, ...updates };
+                            // Need to ensure processing is also merged if updates.processing exists
+                            if (updates.processing) {
+                                updatedOrder.processing = { ...o.processing, ...updates.processing };
+                            }
+                            // Also update payment status if it was part of updates
+                            if (updates.payment) {
+                                updatedOrder.payment = { ...o.payment, ...updates.payment };
+                            }
+                            return updatedOrder;
+                        }
+                        return o;
+                    })
             );
 
-            // No toast here, let the calling function provide specific feedback
+
+            console.log(`Order ${orderId} updated.`);
+
             return true;
         } catch (error) {
+            setIsUpdatingOrderId(null); // Ensure loading state is turned off here on error
             console.error("Error updating repair order:", error);
             toast.error("Update Failed", {
                 description: `Could not update order ${orderId.slice(0, 6).toUpperCase()}.`,
             });
-            // Consider reverting local state on error (complex with optimistic updates)
             return false;
         } finally {
-            setIsUpdatingOrderId(null); // Reset updating state
+            // Loading state is turned off inside try/catch blocks now
+            // setIsUpdatingOrderId(null); // Removed from finally
         }
     };
 
@@ -186,8 +203,8 @@ const RepairManager: React.FC = () => {
             toast.error("Action Failed", { description: "Order data is incomplete." });
             return;
         }
-        // Check if status is appropriate for assigning
-        if (order.processing.repairStatus !== 'Sent to Repair Manager' && order.processing.repairStatus !== 'Ready for Repair (from Dropoff)') {
+        // Check if status is appropriate for assigning (incoming statuses to repair)
+        if (order.processing.repairStatus !== 'Sent to Repair Manager' && order.processing.repairStatus !== 'Ready for Repair (from Dropoff)' && order.processing.repairStatus !== 'Ready for Repair (from Pickup)') { // Include all incoming repair statuses
             toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not ready for assignment.`);
             return;
         }
@@ -196,7 +213,7 @@ const RepairManager: React.FC = () => {
             processing: {
                 ...order.processing,
                 repairStatus: "Assigned" as RepairStatus,
-                repairManagerStatus: "Assigned", // Internal status if needed
+                // repairManagerStatus: "Assigned", // Internal status if needed
                 // Maybe set assigned technician ID here? assignedTo: 'tech1'
             },
         };
@@ -220,7 +237,7 @@ const RepairManager: React.FC = () => {
             processing: {
                 ...order.processing,
                 repairStatus: "In Repair" as RepairStatus,
-                // Maybe set repair start timestamp? repairStartTime: Timestamp.now()
+                repairStartTime: Timestamp.now(), // Set repair start timestamp
             },
         };
         const success = await updateRepairOrder(order.id, updates);
@@ -243,7 +260,7 @@ const RepairManager: React.FC = () => {
             processing: {
                 ...order.processing,
                 repairStatus: "Repair Completed" as RepairStatus,
-                // Maybe set repair completion timestamp? repairCompletionTime: Timestamp.now()
+                repairCompletionTime: Timestamp.now(), // Set repair completion timestamp
             },
         };
         const success = await updateRepairOrder(order.id, updates);
@@ -264,9 +281,9 @@ const RepairManager: React.FC = () => {
         }
 
         // --- Corrected Routing Logic ---
-        // Ensure delivery method is set and valid for routing
-        if (!order.processing.deliveryMethod || (order.processing.deliveryMethod !== 'pickup' && order.processing.deliveryMethod !== 'dropoff' && order.processing.deliveryMethod !== 'delivery')) {
-            toast.error(`Order ${order.id.slice(0, 6).toUpperCase()} has an invalid or missing delivery method for fulfillment: "${order.processing.deliveryMethod}".`);
+        // Determine routing based on fulfillmentMethod
+        if (!order.processing.fulfillmentMethod || (order.processing.fulfillmentMethod !== 'pickup' && order.processing.fulfillmentMethod !== 'delivery')) {
+            toast.error(`Order ${order.id.slice(0, 6).toUpperCase()} has an invalid or missing fulfillment method: "${order.processing.fulfillmentMethod}". Cannot route.`);
             return;
         }
 
@@ -278,43 +295,39 @@ const RepairManager: React.FC = () => {
             status: 'awaiting_fulfillment' as OrderStatus, // <-- CHANGE main status
         };
 
-        if (order.processing.deliveryMethod === 'pickup' || order.processing.deliveryMethod === 'dropoff') {
-            // Both pickup and dropoff result in customer pickup after repair
-            nextRepairStatus = "Ready for Pickup" as RepairStatus;
-            destinationManager = "Pickup Scheduler";
-            processingUpdates.repairStatus = nextRepairStatus;
-            // Set/ensure pickup-specific status for Pickup Scheduler
-            processingUpdates.pickupStatus = "awaiting_pickup" as PickupStatus;
-            // Ensure other method statuses are cleared or set to null
-            processingUpdates.dropoffStatus = null; // Explicitly clear dropoff status
-            processingUpdates.deliveryStatus = null; // Explicitly clear delivery status
+        if (order.processing.fulfillmentMethod === 'pickup') { // <-- CHECK FULFILLMENT METHOD
+            nextRepairStatus = "Ready for Customer Pickup" as RepairStatus; // <-- NEW STATUS NAME
+            destinationManager = "Dropoff Manager (Customer Pickup)"; // <-- Destination is Dropoff Manager for customer pickup
+            // Set/ensure specific fulfillment status for Dropoff Manager (Customer Pickup)
+            processingUpdates.repairStatus = nextRepairStatus; // Set main repair status
+            // We are consolidating sub-statuses into repairStatus, so no separate pickupStatus field needed here.
 
-        } else if (order.processing.deliveryMethod === 'delivery') {
+        } else if (order.processing.fulfillmentMethod === 'delivery') { // Check fulfillment method
             // Delivery method
-            nextRepairStatus = "Ready for Delivery" as RepairStatus;
-            destinationManager = "Delivery Manager";
-            processingUpdates.repairStatus = nextRepairStatus;
-            // Set/ensure delivery-specific status for Delivery Manager
-            processingUpdates.deliveryStatus = "awaiting_delivery" as DeliveryStatus;
-            // Ensure other method statuses are cleared or set to null
-            processingUpdates.pickupStatus = null; // Explicitly clear pickup status
-            processingUpdates.dropoffStatus = null; // Explicitly clear dropoff status
+            nextRepairStatus = "Ready for KitFix Delivery" as RepairStatus; // <-- NEW STATUS NAME
+            destinationManager = "Delivery Manager"; // <-- Destination is Delivery Manager for KitFix Delivery
+            processingUpdates.repairStatus = nextRepairStatus; // Set main repair status
+            // Set/ensure specific fulfillment status for Delivery Manager
+            // We are consolidating sub-statuses into repairStatus, so no separate deliveryStatus field needed here.
 
         } else {
             // Fallback - this should ideally not be reached with the check above
-            toast.error(`Unexpected delivery method "${order.processing.deliveryMethod}". Cannot route.`);
+            toast.error(`Unexpected fulfillment method "${order.processing.fulfillmentMethod}". Cannot route.`);
             return;
         }
 
         const updates: Partial<Order> = {
             processing: processingUpdates, // Use the constructed processing updates
-            readyForFulfillmentAt: Timestamp.now(), // Optional timestamp
+            readyForFulfillmentAt: Timestamp.now(), // Timestamp when ready for fulfillment
             updatedAt: serverTimestamp(),
         };
 
-        const success = await updateRepairOrder(order.id, updates);
+        const success = await updateRepairOrder(order.id, updates); // updateRepairOrder removes from local state on success
+
         if (success) {
-            toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} routed to ${destinationManager}.`);
+            // Updated toast message based on new logic
+            const fulfillmentMethodText = order.processing.fulfillmentMethod === 'pickup' ? 'Customer Pickup' : 'KitFix Delivery';
+            toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} routed for ${fulfillmentMethodText}. It has been removed from this list.`);
         }
     };
 
@@ -366,7 +379,7 @@ const RepairManager: React.FC = () => {
             <div className="flex flex-col sm:flex-row justify-between gap-4 mb-6">
                 {/* Filter Buttons */}
                 <div className="flex flex-wrap gap-3">
-                    {statusOptions.map(status => (
+                    {statusOptions.map(status => ( // Uses updated statusOptions
                         <Button
                             key={status}
                             variant={filterStatus === status ? 'default' : 'outline'}
@@ -401,7 +414,8 @@ const RepairManager: React.FC = () => {
                             return null;
                         }
 
-                        const deliveryMethod = order.processing?.deliveryMethod; // Get method for display
+                        const { initialMethod, fulfillmentMethod, repairStatus, status } = order.processing; // Destructure needed fields
+
 
                         return (
                             <Card key={order.id} className="rounded-2xl shadow-md">
@@ -415,16 +429,20 @@ const RepairManager: React.FC = () => {
                                         {/* Display the current repairStatus */}
                                         <Badge
                                             variant="outline"
-                                            className={`capitalize ${order.processing?.repairStatus === "Repair Completed" || order.processing?.repairStatus === "Ready for Pickup" || order.processing?.repairStatus === "Ready for Delivery"
-                                                ? "bg-green-100 text-green-600" // Use green for completed/ready for fulfillment
-                                                : order.processing?.repairStatus === "In Repair"
+                                            className={`capitalize ${repairStatus === "Repair Completed"
+                                                ? "bg-green-100 text-green-600"
+                                                : repairStatus === "In Repair"
                                                     ? "bg-blue-100 text-blue-600"
-                                                    : order.processing?.repairStatus === "Assigned"
+                                                    : repairStatus === "Assigned"
                                                         ? "bg-purple-100 text-purple-600"
-                                                        : "bg-gray-100 text-gray-600" // Default for initial repair states
+                                                        : repairStatus === "Sent to Repair Manager" || repairStatus === "Ready for Repair (from Dropoff)" || repairStatus === "Ready for Repair (from Pickup)"
+                                                            ? "bg-gray-100 text-gray-600" // Incoming statuses
+                                                            : repairStatus === "Ready for Customer Pickup" || repairStatus === "Ready for KitFix Delivery"
+                                                                ? "bg-yellow-100 text-yellow-600" // Awaiting fulfillment routing
+                                                                : "bg-gray-100 text-gray-600" // Default/other statuses
                                                 }`}
                                         >
-                                            {order.processing?.repairStatus || 'Processing'}
+                                            {repairStatus || 'Processing'}
                                         </Badge>
                                     </div>
 
@@ -437,13 +455,21 @@ const RepairManager: React.FC = () => {
 
                                     {/* Order details */}
                                     <div className="text-sm text-gray-700 space-y-1">
+                                        {initialMethod && (
+                                            <p className="text-gray-700">
+                                                <Truck className="inline mr-1 h-4 w-4 text-gray-600" />
+                                                <strong>Initial:</strong> {initialMethod.charAt(0).toUpperCase() + initialMethod.slice(1)}
+                                            </p>
+                                        )}
+                                        {fulfillmentMethod && (
+                                            <p className="text-gray-700">
+                                                <Truck className="inline mr-1 h-4 w-4 text-gray-600" />
+                                                <strong>Return:</strong> {fulfillmentMethod.charAt(0).toUpperCase() + fulfillmentMethod.slice(1)}
+                                            </p>
+                                        )}
                                         <p className="text-gray-700">
                                             <Tag className="inline mr-1 h-4 w-4 text-blue-500" />
                                             <strong>Repair:</strong> {order.repairDescription || order.repairType || "N/A"}
-                                        </p>
-                                        <p className="text-gray-700">
-                                            <Truck className="inline mr-1 h-4 w-4 text-gray-600" />
-                                            <strong>Method:</strong> {deliveryMethod ? deliveryMethod.charAt(0).toUpperCase() + deliveryMethod.slice(1) : 'N/A'}
                                         </p>
                                         {order.notes && (
                                             <p className="text-gray-700">
@@ -454,48 +480,54 @@ const RepairManager: React.FC = () => {
                                         {/* Add more relevant details like price, dates etc if needed in the card preview */}
                                     </div>
 
-                                    {/* Actions based on current repairStatus */}
+                                    {/* --- Actions --- */}
                                     <div className="mt-4 flex flex-wrap justify-end gap-2"> {/* Use flex-wrap for smaller screens */}
-                                        {/* Button to mark as Assigned */}
-                                        {(order.processing?.repairStatus === 'Sent to Repair Manager' || order.processing?.repairStatus === 'Ready for Repair (from Dropoff)') && (
-                                            <Button
-                                                size="sm"
-                                                onClick={() => markAsAssigned(order)}
-                                                disabled={isUpdatingOrderId === order.id}
-                                            >
-                                                {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                                <UserCog className="mr-1 h-4 w-4" /> Assign
-                                            </Button>
+
+                                        {/* Actions for orders IN the repair process (status === 'in_progress') */}
+                                        {status === 'in_progress' && (
+                                            <>
+                                                {/* Button to mark as Assigned */}
+                                                {(repairStatus === 'Sent to Repair Manager' || repairStatus === 'Ready for Repair (from Dropoff)' || repairStatus === 'Ready for Repair (from Pickup)') && ( // Include all incoming repair statuses
+                                                    <Button
+                                                        size="sm"
+                                                        onClick={() => markAsAssigned(order)}
+                                                        disabled={isUpdatingOrderId === order.id}
+                                                    >
+                                                        {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                                        <UserCog className="mr-1 h-4 w-4" /> Assign
+                                                    </Button>
+                                                )}
+
+                                                {/* Button to mark as In Repair */}
+                                                {repairStatus === 'Assigned' && (
+                                                    <Button
+                                                        size="sm"
+                                                        variant="secondary"
+                                                        onClick={() => markInRepair(order)}
+                                                        disabled={isUpdatingOrderId === order.id}
+                                                    >
+                                                        {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                                        <Clock className="mr-1 h-4 w-4" /> Start Repair
+                                                    </Button>
+                                                )}
+
+                                                {/* Button to mark Repair Completed */}
+                                                {repairStatus === 'In Repair' && (
+                                                    <Button
+                                                        size="sm"
+                                                        variant="default" // Use default variant for primary action
+                                                        onClick={() => markRepairCompleted(order)}
+                                                        disabled={isUpdatingOrderId === order.id}
+                                                    >
+                                                        {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                                        <CheckCircle className="mr-1 h-4 w-4" /> Complete Repair
+                                                    </Button>
+                                                )}
+                                            </>
                                         )}
 
-                                        {/* Button to mark as In Repair */}
-                                        {order.processing?.repairStatus === 'Assigned' && (
-                                            <Button
-                                                size="sm"
-                                                variant="secondary"
-                                                onClick={() => markInRepair(order)}
-                                                disabled={isUpdatingOrderId === order.id}
-                                            >
-                                                {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                                <Clock className="mr-1 h-4 w-4" /> Start Repair
-                                            </Button>
-                                        )}
-
-                                        {/* Button to mark Repair Completed */}
-                                        {order.processing?.repairStatus === 'In Repair' && (
-                                            <Button
-                                                size="sm"
-                                                variant="default" // Use default variant for primary action
-                                                onClick={() => markRepairCompleted(order)}
-                                                disabled={isUpdatingOrderId === order.id}
-                                            >
-                                                {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                                <CheckCircle className="mr-1 h-4 w-4" /> Complete Repair
-                                            </Button>
-                                        )}
-
-                                        {/* Button to Route to Fulfillment */}
-                                        {order.processing?.repairStatus === 'Repair Completed' && (
+                                        {/* Button to Route to Fulfillment (appears when repairStatus === 'Repair Completed') */}
+                                        {repairStatus === 'Repair Completed' && status === 'in_progress' && ( // Only route if repair completed AND still in_progress
                                             <Button
                                                 size="sm"
                                                 variant="default" // Use default variant
@@ -506,6 +538,12 @@ const RepairManager: React.FC = () => {
                                                 <ArrowRight className="mr-1 h-4 w-4" /> Route to Fulfillment
                                             </Button>
                                         )}
+
+                                        {/* Display status if order is awaiting fulfillment routing (should not have buttons here) */}
+                                        {status === 'awaiting_fulfillment' && (
+                                            <Badge variant="default" className="capitalize">Awaiting Fulfillment Action</Badge> // Indicates it's in one of the fulfillment manager queues
+                                        )}
+
 
                                         {/* Maybe a View Details button similar to OrdersTable (Optional) */}
                                         {/* This would involve implementing a similar dialog here */}

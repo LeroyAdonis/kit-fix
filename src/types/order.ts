@@ -2,47 +2,37 @@
 
 import { Timestamp } from "firebase/firestore";
 
-// Define core processing statuses - Added 'awaiting_fulfillment' and 'fulfilled'
+// Define core processing statuses
 export type OrderStatus =
-  | "pending"
-  | "in_progress"
-  | "awaiting_fulfillment"
-  | "fulfilled"
-  | "completed"
-  | "cancelled";
+  | "pending" // OrdersTable
+  | "in_progress" // Initial pickup/dropoff, RepairManager
+  | "awaiting_fulfillment" // Waiting in PickupScheduler or DeliveryManager
+  | "fulfilled" // Completed pickup or delivery
+  | "completed" // Final internal complete status? Maybe fulfilled IS completed. Let's stick to fulfilled.
+  | "cancelled"; // Cancelled at any stage
 
-// Define overall repair/processing status within the workflow
+// Define overall repair/processing status within the workflow - Refined statuses
 export type RepairStatus =
-  | "Pending Routing" // Initial state from customer form before admin acts
-  | "Routed to Dropoff" // After admin routes a dropoff order
-  | "Sent to Repair Manager" // After admin routes a pickup/delivery/standard order
-  | "Ready for Repair (from Dropoff)" // After item is dropped off, before Repair Manager picks it up
-  | "Assigned" // Assigned to a technician within Repair Manager
-  | "In Repair" // Repair work is actively being done
-  | "Repair Completed" // Repair work is finished
-  | "Ready for Pickup" // Status set by Repair Manager before routing to Pickup Scheduler
-  | "Ready for Delivery" // Status set by Repair Manager before routing to Delivery Manager
-  | "Out for Delivery"; // Status set by Delivery Manager
+  | "Pending Routing" // Initial state from customer form before admin acts (OrdersTable)
+  | "Routed to Dropoff" // After admin routes a customer dropoff order (OrdersTable)
+  | "Routed for Pickup (KitFix)" // After admin routes a KitFix pickup order (OrdersTable)
+  | "Item Dropped Off" // Set by DropoffManager (Initial phase)
+  | "Item Picked Up (KitFix)" // Set by PickupScheduler (Initial phase)
+  | "Ready for Repair (from Dropoff)" // Set by DropoffManager (Initial phase) - Signals ready for RepairManager
+  | "Ready for Repair (from Pickup)" // Set by PickupScheduler (Initial phase) - Signals ready for RepairManager
+  | "Assigned" // Set by RepairManager
+  | "In Repair" // Set by RepairManager
+  | "Repair Completed" // Set by RepairManager
+  | "Ready for Customer Pickup" // Set by RepairManager (Fulfillment phase) - Signals ready for DropoffManager
+  | "Ready for KitFix Delivery" // Set by RepairManager (Fulfillment phase) - Signals ready for DeliveryManager
+  | "Scheduled for Pickup (Customer)" // Set by DropoffManager (Fulfillment phase)
+  | "Scheduled for Delivery (KitFix)" // Set by DeliveryManager (Fulfillment phase)
+  | "Out for Delivery" // Set by DeliveryManager (Fulfillment phase)
+  | "Picked Up by Customer" // Set by DropoffManager (Fulfillment phase)
+  | "Delivered to Customer"; // Set by DeliveryManager (Fulfillment phase)
 
-export type DeliveryMethod = "pickup" | "delivery" | "dropoff";
-
-// Define specific statuses for each method flow - Added scheduled/actual timestamps
-export type DropoffStatus =
-  | "pending"
-  | "awaiting_dropoff"
-  | "dropped_off"
-  | "ready_for_repair";
-export type PickupStatus =
-  | "pending"
-  | "awaiting_pickup"
-  | "scheduled"
-  | "picked"; // 'picked' is the final status for this flow
-export type DeliveryStatus =
-  | "pending"
-  | "awaiting_delivery"
-  | "scheduled"
-  | "out_for_delivery"
-  | "delivered"; // 'delivered' is the final status for this flow
+export type InitialMethod = "pickup" | "dropoff"; // How it gets TO KitFix
+export type FulfillmentMethod = "pickup" | "delivery"; // How it gets BACK to customer
 
 export type PaymentStatus = "unpaid" | "paid" | "refunded";
 
@@ -50,46 +40,50 @@ export interface ContactInfo {
   name: string;
   email: string;
   phone?: string;
-  address?: string; // Address might be saved here, especially for delivery method
+  address?: string; // Customer's address - used for delivery fulfillment or potentially pickup from customer
 }
 
 // Consolidated processing information
 export interface ProcessingInfo {
-  status: OrderStatus; // Main status: pending, in_progress, awaiting_fulfillment, fulfilled, completed, cancelled
+  status: OrderStatus; // Main status: pending, in_progress, awaiting_fulfillment, fulfilled, cancelled
   repairStatus: RepairStatus; // Detailed status within the workflow
 
-  deliveryMethod: DeliveryMethod; // How the item gets to/from KitFix
-
-  // Method-specific statuses (only one set will be relevant based on deliveryMethod)
-  dropoffStatus?: DropoffStatus; // Status for dropoff flow
-  pickupStatus?: PickupStatus; // Status for pickup flow
-  deliveryStatus?: DeliveryStatus; // Status for delivery flow
+  initialMethod: InitialMethod; // How it gets TO KitFix
+  fulfillmentMethod: FulfillmentMethod; // How it gets BACK to customer
 
   duration?: string; // Estimated repair duration from quote
-  preferredDate?: string; // Customer's preferred date string from schedule form
+  preferredDate?: string; // Customer's preferred date string from schedule form (can be date for dropoff, pickup, or delivery)
 
   // Timestamps for key events (managed by admin actions)
-  // repairStartTimestamp?: Timestamp; // Optional: When repair began
-  // repairCompleteTimestamp?: Timestamp; // Optional: When repair finished
+  readyForFulfillmentAt?: Timestamp; // Timestamp when RepairManager marks repair completed and routes
 
-  // Dates related to specific methods, saved as Timestamps
-  scheduledDropoffDate?: Timestamp; // Timestamp for when dropoff is scheduled/expected
-  actualDropoffDate?: Timestamp; // Timestamp for when customer actually dropped off
-  scheduledPickupDate?: Timestamp; // Timestamp for when pickup is scheduled/expected
-  actualPickupDate?: Timestamp; // Timestamp for when customer actually picked up
-  scheduledDeliveryDate?: Timestamp; // Timestamp for when delivery is scheduled/expected
-  actualDeliveryDate?: Timestamp; // Timestamp for when delivery was completed
-  // Maybe a 'readyForFulfillmentAt' timestamp set by RepairManager?
-  readyForFulfillmentAt?: Timestamp;
+  // Dates related to specific steps (Timestamps)
+  scheduledInitialPickupDate?: Timestamp; // KitFix pickup from customer scheduled
+  actualInitialPickupDate?: Timestamp; // KitFix picked up from customer
+  scheduledCustomerDropoffDate?: Timestamp; // Customer dropoff scheduled/expected (maybe redundant with preferredDate string)
+  actualCustomerDropoffDate?: Timestamp; // Customer actually dropped off
+
+  scheduledCustomerPickupDate?: Timestamp; // Customer pickup from KitFix scheduled
+  actualCustomerPickupDate?: Timestamp; // Customer actually picked up from KitFix
+
+  scheduledKitFixDeliveryDate?: Timestamp; // KitFix delivery to customer scheduled
+  actualKitFixDeliveryDate?: Timestamp; // KitFix delivered to customer
 
   // Location/address fields related to methods (can be same as contactInfo.address)
-  dropoffLocation?: string; // Address where customer drops off (e.g., Store Address)
-  pickupLocation?: string; // Address where customer picks up (e.g., Store Address)
-  // deliveryAddress is usually in contactInfo.address
+  // Let's make these optional strings, not necessarily requiring a Placeholder value saved.
+  customerDropoffLocation?: string; // Address where customer drops off (e.g., Store Address)
+  initialPickupLocation?: string; // Address where KitFix picks up (likely same as contactInfo.address) - Redundant with contactInfo.address if we save there. Let's rely on contactInfo.address for KitFix pickup.
+  customerPickupLocation?: string; // Address where customer picks up (e.g., Store Address)
+  kitFixDeliveryAddress?: string; // Address where KitFix delivers (likely same as contactInfo.address) - Redundant with contactInfo.address if we save there. Let's rely on contactInfo.address for KitFix delivery.
 
-  // Other processing fields
-  repairManagerStatus?: string; // e.g., 'Assigned' (internal to Repair Manager)
-  // Add any other processing fields as needed
+  // Internal Repair Manager status (optional)
+  assignedTo?: string; // Technician ID/Name
+  repairStartTime?: Timestamp;
+  repairCompletionTime?: Timestamp;
+
+  // Removed redundant location fields based on standardizing address in contactInfo
+  // Remove redundant sub-status fields if not strictly necessary and repairStatus is sufficient.
+  // We'll keep the simplified approach using only repairStatus and main status for filtering/actions.
 }
 
 export interface PaymentInfo {

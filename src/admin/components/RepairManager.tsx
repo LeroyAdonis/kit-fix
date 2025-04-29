@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import {
     collection,
-    getDocs,
+    getDocs, // Might not need getDocs anymore if using onSnapshot
     query,
     where,
     orderBy,
@@ -11,6 +11,8 @@ import {
     serverTimestamp,
     Timestamp,
     getDoc, // Needed for update logic
+    // Import onSnapshot
+    onSnapshot,
 } from "firebase/firestore";
 import { db } from "@/firebaseConfig";
 import { format } from "date-fns";
@@ -39,7 +41,7 @@ import {
 import { toast } from 'sonner';
 
 // Import types
-import { Order, OrderStatus, InitialMethod, FulfillmentMethod, RepairStatus, PaymentStatus } from "@/types/order";
+import { Order, OrderStatus, InitialMethod, FulfillmentMethod, RepairStatus, PaymentStatus, ProcessingInfo } from "@/types/order"; // Ensure ProcessingInfo is imported for updates
 
 // Define filter status options for Repair Manager
 // These are the statuses an order is *in* while being managed by the Repair Manager
@@ -66,76 +68,77 @@ const RepairManager: React.FC = () => {
 
 
     useEffect(() => {
-        const fetchOrders = async () => {
-            setLoading(true);
-            try {
-                const ordersRef = collection(db, "orders");
+        setLoading(true); // Start loading when the effect runs
 
-                // Query to fetch orders that are IN_PROGRESS
-                // Orders routed from OrdersTable (pickup/delivery) or DropoffManager (after dropoff/ready for repair) are in_progress.
-                // Orders routed *to* fulfillment are awaiting_fulfillment.
-                // So, fetch orders in_progress.
-                let q = query(
-                    ordersRef,
-                    where('processing.status', '==', 'in_progress' as OrderStatus), // Fetch orders in_progress
-                    orderBy("createdAt", "desc")
-                );
+        const ordersRef = collection(db, "orders");
 
-                const snapshot = await getDocs(q);
-                const fetchedOrders = snapshot.docs.map((d) => {
-                    const data = d.data();
-                    return {
-                        id: d.id,
-                        ...data,
-                        contactInfo: data.contactInfo || {},
-                        processing: data.processing || {},
-                        payment: data.payment || {},
-                    };
-                }) as Order[];
+        // Query to fetch orders that are IN_PROGRESS
+        // Orders routed from OrdersTable (pickup/delivery) or DropoffManager (after dropoff/ready for repair) are in_progress.
+        // Orders routed *to* fulfillment are awaiting_fulfillment.
+        // So, fetch orders in_progress.
+        const q = query(
+            ordersRef,
+            where('processing.status', '==', 'in_progress' as OrderStatus), // Fetch orders in_progress
+            orderBy("createdAt", "desc")
+        );
 
-                // DEBUG: Log fetched orders from Firestore
-                console.log("RepairManager: Fetched orders from Firestore (in_progress):", fetchedOrders);
+        // Use onSnapshot for real-time updates
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            console.log("RepairManager: Received snapshot update.");
+            const fetchedOrders = snapshot.docs.map((d) => {
+                const data = d.data();
+                return {
+                    id: d.id,
+                    ...data,
+                    contactInfo: data.contactInfo || {},
+                    processing: data.processing || {},
+                    payment: data.payment || {},
+                };
+            }) as Order[];
 
+            // DEBUG: Log fetched orders from Firestore
+            console.log("RepairManager: Fetched orders from Firestore (in_progress):", fetchedOrders);
 
-                // Client-side filter to include only orders whose repairStatus is in repairProcessStatuses
-                // This ensures only orders that are actively in the repair manager's workflow are displayed.
-                const relevantOrders = fetchedOrders.filter(order =>
-                    order.processing?.repairStatus && repairProcessStatuses.includes(order.processing.repairStatus)
-                );
+            // Client-side filter to include only orders whose repairStatus is in repairProcessStatuses
+            // This ensures only orders that are actively in the repair manager's workflow are displayed.
+            const relevantOrders = fetchedOrders.filter(order =>
+                order.processing?.repairStatus && repairProcessStatuses.includes(order.processing.repairStatus)
+            );
 
-                // DEBUG: Log orders after filtering by relevantStatuses
-                console.log("RepairManager: Filtered orders by relevantStatuses:", relevantOrders);
+            // DEBUG: Log orders after filtering by relevantStatuses
+            console.log("RepairManager: Filtered orders by relevantStatuses:", relevantOrders);
 
+            setOrders(relevantOrders); // Set the state with relevant orders
+            setLoading(false); // Set loading to false AFTER receiving the first snapshot
+        }, (error) => {
+            console.error("RepairManager: Error fetching real-time orders:", error);
+            toast.error("Real-time updates failed for repair orders.");
+            setLoading(false); // Ensure loading is off on error
+        });
 
-                setOrders(relevantOrders); // Set the state with relevant orders
-
-            } catch (error) {
-                console.error("Error fetching repair orders:", error);
-                toast.error("Error fetching repair orders", {
-                    description: "Could not load orders for Repair Manager.",
-                });
-            } finally {
-                setLoading(false);
-            }
+        // Cleanup function: Unsubscribe when the component unmounts or the effect re-runs
+        return () => {
+            console.log("RepairManager: Unsubscribing from snapshot listener.");
+            unsubscribe();
         };
 
-        // Fetch orders whenever the component mounts or db changes.
-        // Filter/search are client-side, so no refetch needed for filter/search term changes.
-        fetchOrders();
-    }, [db]); // Dependency array
+        // Dependencies: Add dependencies that could change the query.
+        // The query depends on db. filterStatus and searchTerm affect client-side filtering,
+        // but they don't need to trigger a re-fetch from Firestore in this setup.
+    }, [db]); // Depend only on db
 
 
-    // Generic update function for repair orders
+    // Generic update function - Rely solely on onSnapshot for local state update
     const updateRepairOrder = async (orderId: string, updates: Partial<Order>): Promise<boolean> => {
         setIsUpdatingOrderId(orderId); // Set updating state
         try {
             const orderRef = doc(db, "orders", orderId);
-            // Fetch existing to merge nested objects like processing
+            // Fetch existing is still useful for merging nested objects accurately before sending to Firestore
             const orderSnap = await getDoc(orderRef);
             const existingOrder = orderSnap.exists() ? orderSnap.data() as Order : null;
 
             if (!existingOrder) {
-                console.error("Error: Order not found for repair update:", orderId);
+                console.error("Error: Order not found for update:", orderId);
                 toast.error("Update Failed", { description: "Order not found." });
                 return false;
             }
@@ -152,48 +155,20 @@ const RepairManager: React.FC = () => {
 
             await updateDoc(orderRef, finalUpdates);
 
-            // Optimistically update local state
-            // If the update changes the status OUT of repairProcessStatuses (e.g., routes to fulfillment), remove it.
-            // Otherwise, update it in place.
-            const updatedRepairStatus = finalUpdates.processing?.repairStatus || existingOrder.processing?.repairStatus;
-            const shouldRemoveFromView = updatedRepairStatus && !repairProcessStatuses.includes(updatedRepairStatus);
+            // Rely on onSnapshot to update the 'orders' state.
+            // The updated order will automatically appear/disappear based on the query and client-side filter.
 
-
-            setOrders((prev) =>
-                shouldRemoveFromView
-                    ? prev.filter(o => o.id !== orderId) // Remove if routed out of this view
-                    : prev.map((o) => { // Update in place otherwise
-                        if (o && o.id === orderId) {
-                            // Apply all the updates locally
-                            const updatedOrder = { ...o, ...updates };
-                            // Need to ensure processing is also merged if updates.processing exists
-                            if (updates.processing) {
-                                updatedOrder.processing = { ...o.processing, ...updates.processing };
-                            }
-                            // Also update payment status if it was part of updates
-                            if (updates.payment) {
-                                updatedOrder.payment = { ...o.payment, ...updates.payment };
-                            }
-                            return updatedOrder;
-                        }
-                        return o;
-                    })
-            );
-
-
-            console.log(`Order ${orderId} updated.`);
+            console.log(`Order ${orderId} Firestore updated.`);
 
             return true;
         } catch (error) {
-            setIsUpdatingOrderId(null); // Ensure loading state is turned off here on error
             console.error("Error updating repair order:", error);
             toast.error("Update Failed", {
                 description: `Could not update order ${orderId.slice(0, 6).toUpperCase()}.`,
             });
             return false;
         } finally {
-            // Loading state is turned off inside try/catch blocks now
-            // setIsUpdatingOrderId(null); // Removed from finally
+            setIsUpdatingOrderId(null); // Reset updating state
         }
     };
 
@@ -290,25 +265,25 @@ const RepairManager: React.FC = () => {
 
         let nextRepairStatus: RepairStatus;
         let destinationManager: string;
-        let processingUpdates: Partial<ProcessingInfo> = { // Start with existing processing fields
-            ...order.processing,
+        // No need to copy existing processing state here, updateRepairOrder fetches it
+        let processingUpdates: Partial<ProcessingInfo> = {
             status: 'awaiting_fulfillment' as OrderStatus, // <-- CHANGE main status
+            // repairStatus will be set below
         };
 
         if (order.processing.fulfillmentMethod === 'pickup') { // <-- CHECK FULFILLMENT METHOD
-            nextRepairStatus = "Ready for Customer Pickup" as RepairStatus; // <-- NEW STATUS NAME
-            destinationManager = "Dropoff Manager (Customer Pickup)"; // <-- Destination is Dropoff Manager for customer pickup
-            // Set/ensure specific fulfillment status for Dropoff Manager (Customer Pickup)
-            processingUpdates.repairStatus = nextRepairStatus; // Set main repair status
-            // We are consolidating sub-statuses into repairStatus, so no separate pickupStatus field needed here.
+            nextRepairStatus = "Ready for Customer Pickup" as RepairStatus;
+            destinationManager = "Dropoff Manager (Customer Pickup)";
+            processingUpdates.repairStatus = nextRepairStatus;
+            // No need to set pickupStatus here, DropoffManager manages its specific statuses
+            // processingUpdates.pickupStatus = "awaiting_pickup" as PickupStatus; // REMOVE
 
         } else if (order.processing.fulfillmentMethod === 'delivery') { // Check fulfillment method
-            // Delivery method
-            nextRepairStatus = "Ready for KitFix Delivery" as RepairStatus; // <-- NEW STATUS NAME
-            destinationManager = "Delivery Manager"; // <-- Destination is Delivery Manager for KitFix Delivery
-            processingUpdates.repairStatus = nextRepairStatus; // Set main repair status
-            // Set/ensure specific fulfillment status for Delivery Manager
-            // We are consolidating sub-statuses into repairStatus, so no separate deliveryStatus field needed here.
+            nextRepairStatus = "Ready for KitFix Delivery" as RepairStatus;
+            destinationManager = "Delivery Manager";
+            processingUpdates.repairStatus = nextRepairStatus;
+            // No need to set deliveryStatus here, DeliveryManager manages its specific statuses
+            // processingUpdates.deliveryStatus = "awaiting_delivery" as DeliveryStatus; // REMOVE
 
         } else {
             // Fallback - this should ideally not be reached with the check above
@@ -322,12 +297,12 @@ const RepairManager: React.FC = () => {
             updatedAt: serverTimestamp(),
         };
 
-        const success = await updateRepairOrder(order.id, updates); // updateRepairOrder removes from local state on success
+        const success = await updateRepairOrder(order.id, updates); // updateRepairOrder performs Firestore write
 
         if (success) {
-            // Updated toast message based on new logic
+            // The order will disappear from this list automatically due to onSnapshot
             const fulfillmentMethodText = order.processing.fulfillmentMethod === 'pickup' ? 'Customer Pickup' : 'KitFix Delivery';
-            toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} routed for ${fulfillmentMethodText}. It has been removed from this list.`);
+            toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} routed for ${fulfillmentMethodText}.`);
         }
     };
 

@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import {
     collection,
-    getDocs,
+    getDocs, // Might not need getDocs anymore if using onSnapshot
     query,
     where,
     orderBy,
@@ -11,6 +11,8 @@ import {
     serverTimestamp,
     Timestamp,
     getDoc, // Needed for update logic
+    // Import onSnapshot
+    onSnapshot,
 } from "firebase/firestore";
 import { db } from "@/firebaseConfig";
 import { format } from "date-fns";
@@ -33,7 +35,8 @@ import {
     Tag, // Repair Type
     Package, // Notes
     Clock, // Status icon
-} from "lucide-react";
+    ArrowRight // Routing icon
+} from "lucide-react"; // Added ArrowRight icon for routing button
 import { toast } from 'sonner';
 
 // Import types - Using InitialMethod and FulfillmentMethod
@@ -44,13 +47,15 @@ const kitFixPickupStatuses: RepairStatus[] = [
     "Routed for Pickup (KitFix)", // Initial status from OrdersTable
     "Scheduled for Pickup (KitFix)", // Optional scheduling step
     "Item Picked Up (KitFix)", // After KitFix picks up
+    "Ready for Repair (from Pickup)", // After KitFix picks up, sent to RepairManager
 ];
 const relevantStatuses: RepairStatus[] = [...kitFixPickupStatuses];
 type PickupFilterStatus = RepairStatus | 'all';
 
 
 const PickupScheduler: React.FC = () => {
-    const [filterStatus, setFilterStatus] = useState<PickupFilterStatus>('Routed for Pickup (KitFix)'); // Default filter
+    // --- ALL HOOKS MUST BE AT THE TOP LEVEL ---
+    const [filterStatus, setFilterStatus] = useState<PickupFilterStatus>('all'); // Default filter to 'all' or an initial state
     const [orders, setOrders] = useState<Order[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState(''); // State for search term
@@ -60,71 +65,74 @@ const PickupScheduler: React.FC = () => {
     const statusOptions: PickupFilterStatus[] = ['all', ...relevantStatuses];
 
     useEffect(() => {
-        const fetchOrders = async () => {
-            setLoading(true);
-            try {
-                const ordersRef = collection(db, "orders");
+        setLoading(true); // Start loading when the effect runs
 
-                // Query for orders in 'in_progress' status, and initialMethod === 'pickup'
-                // These are orders that KitFix needs to pick up FROM the customer.
-                // The query filters by main status and initial method.
-                let q = query(
-                    ordersRef,
-                    where('processing.status', '==', 'in_progress' as OrderStatus), // Must be in_progress after routing from OrdersTable
-                    where('processing.initialMethod', '==', 'pickup' as InitialMethod), // Initial method is pickup (KitFix picks up)
-                    orderBy("createdAt", "desc") // Order by creation date
-                );
+        const ordersRef = collection(db, "orders");
 
-                const snapshot = await getDocs(q);
-                const fetchedOrders = snapshot.docs.map((d) => {
-                    const data = d.data();
-                    return {
-                        id: d.id,
-                        ...data,
-                        contactInfo: data.contactInfo || {},
-                        processing: data.processing || {},
-                        payment: data.payment || {},
-                    };
-                }) as Order[];
+        // Query for orders in 'in_progress' status, and initialMethod === 'pickup'
+        // These are orders that KitFix needs to pick up FROM the customer.
+        // The query filters by main status and initial method.
+        const q = query(
+            ordersRef,
+            where('processing.status', '==', 'in_progress' as OrderStatus), // Must be in_progress after routing from OrdersTable
+            where('processing.initialMethod', '==', 'pickup' as InitialMethod), // Initial method is pickup (KitFix picks up)
+            orderBy("createdAt", "desc") // Order by creation date
+        );
 
-                // DEBUG: Log fetched orders before client-side filtering
-                console.log("PickupScheduler: Fetched orders from Firestore (in_progress, initialMethod=pickup):", fetchedOrders);
+        // Use onSnapshot for real-time updates
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            console.log("PickupScheduler: Received snapshot update.");
+            const fetchedOrders = snapshot.docs.map((d) => {
+                const data = d.data();
+                return {
+                    id: d.id,
+                    ...data,
+                    contactInfo: data.contactInfo || {},
+                    processing: data.processing || {},
+                    payment: data.payment || {},
+                };
+            }) as Order[];
 
-
-                // Client-side filter to ensure they have a repair status relevant to this manager
-                // This filters down the fetched orders based on the specific repairStatus values this manager handles.
-                const relevantOrders = fetchedOrders.filter(order =>
-                    order.processing?.repairStatus && relevantStatuses.includes(order.processing.repairStatus)
-                );
-
-                // DEBUG: Log orders after filtering by relevantStatuses
-                console.log("PickupScheduler: Filtered orders by relevantStatuses:", relevantOrders);
+            // DEBUG: Log fetched orders from Firestore
+            console.log("PickupScheduler: Fetched orders from Firestore (in_progress, initialMethod=pickup):", fetchedOrders);
 
 
-                setOrders(relevantOrders); // Set the state with relevant orders
+            // Client-side filter to ensure they have a repair status relevant to this manager
+            // This filters down the fetched orders based on the specific repairStatus values this manager handles.
+            const relevantOrders = fetchedOrders.filter(order =>
+                order.processing?.repairStatus && relevantStatuses.includes(order.processing.repairStatus)
+            );
 
-            } catch (error) {
-                console.error("Error fetching KitFix pickup orders:", error);
-                toast.error("Error fetching KitFix pickup orders", {
-                    description: "Could not load orders for Pickup Scheduler.",
-                });
-            } finally {
-                setLoading(false);
-            }
+            // DEBUG: Log orders after filtering by relevantStatuses
+            console.log("PickupScheduler: Filtered orders by relevantStatuses:", relevantOrders);
+
+
+            setOrders(relevantOrders); // Set the state with relevant orders
+            setLoading(false); // Set loading to false AFTER receiving the first snapshot
+        }, (error) => {
+            console.error("PickupScheduler: Error fetching real-time orders:", error);
+            toast.error("Real-time updates failed for KitFix pickup orders.");
+            setLoading(false); // Ensure loading is off on error
+        });
+
+        // Cleanup function: Unsubscribe when the component unmounts or the effect re-runs
+        return () => {
+            console.log("PickupScheduler: Unsubscribing from snapshot listener.");
+            unsubscribe();
         };
 
-        // Fetch orders whenever the component mounts or db changes.
-        // filterStatus and searchTerm changes are handled by client-side filtering below.
-        fetchOrders();
-        // Added db to dependencies (unlikely to change, but good practice)
-    }, [db]);
+        // Dependencies: Add dependencies that could change the query.
+        // The query depends on db. filterStatus and searchTerm affect client-side filtering,
+        // but they don't need to trigger a re-fetch from Firestore in this setup.
+    }, [filterStatus, db]); // Depend on filterStatus and db
 
 
-    // Generic update function for pickup orders
+    // Generic update function - Rely solely on onSnapshot for local state update
     const updatePickupOrder = async (orderId: string, updates: Partial<Order>): Promise<boolean> => {
-        setIsUpdatingOrderId(orderId);
+        setIsUpdatingOrderId(orderId); // Set updating state
         try {
             const orderRef = doc(db, "orders", orderId);
+            // Fetch existing is still useful for merging nested objects accurately before sending to Firestore
             const orderSnap = await getDoc(orderRef);
             const existingOrder = orderSnap.exists() ? orderSnap.data() as Order : null;
 
@@ -146,15 +154,9 @@ const PickupScheduler: React.FC = () => {
 
             await updateDoc(orderRef, finalUpdates);
 
-            // Optimistically update local state
-            const updatedOrder = { ...existingOrder, ...finalUpdates }; // Merge locally
-            if (finalUpdates.processing) updatedOrder.processing = { ...existingOrder.processing, ...finalUpdates.processing };
-            if (finalUpdates.payment) updatedOrder.payment = { ...existingOrder.payment, ...finalUpdates.payment };
+            // Rely on onSnapshot to update the 'orders' state
 
-
-            setOrders((prev) =>
-                prev.map((o) => (o && o.id === orderId ? updatedOrder : o)) // Check for 'o' safety
-            );
+            console.log(`Order ${orderId} Firestore updated.`);
 
             return true;
         } catch (error) {
@@ -164,7 +166,7 @@ const PickupScheduler: React.FC = () => {
             });
             return false;
         } finally {
-            setIsUpdatingOrderId(null);
+            setIsUpdatingOrderId(null); // Reset updating state
         }
     };
 
@@ -235,24 +237,47 @@ const PickupScheduler: React.FC = () => {
         const success = await updatePickupOrder(order.id, updates);
         if (success) {
             toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} marked as Picked Up by KitFix.`);
-            // This order is now ready for the Repair Manager
-            // Perform a second update immediately to signal readiness for the Repair Manager
-            const nextUpdates: Partial<Order> = {
-                processing: {
-                    // Need to fetch the latest state after the first update
-                    // Or rely on optimistic update merging (less safe with multiple updates)
-                    // Simplest: just set the *next* repairStatus
-                    repairStatus: "Ready for Repair (from Pickup)" as RepairStatus, // Signal ready for Repair Manager
-                },
-            };
-            // updatePickupOrder already fetches and merges, so we can use it again.
-            // This will trigger another optimistic local state update.
-            const secondSuccess = await updatePickupOrder(order.id, nextUpdates);
-            if (secondSuccess) {
-                toast.info(`Order ${order.id.slice(0, 6).toUpperCase()} sent to Repair Queue.`);
-            } else {
-                toast.error(`Failed to send order ${order.id.slice(0, 6).toUpperCase()} to Repair Queue.`);
-            }
+            // This order is now ready for the Repair Manager.
+            // The RepairManager's query/filter will pick it up based on its new "Item Picked Up (KitFix)" repairStatus.
+            // No second update is needed here to explicitly route it to RepairManager.
+            // The RepairManager needs to query for "Item Picked Up (KitFix)" OR "Ready for Repair (from Pickup)".
+            // Let's update the RepairManager's incoming statuses filter.
+        }
+    };
+
+    // Action: Mark Ready for Repair (Explicit step after Item Picked Up)
+    // This button routes to the Repair Manager
+    const markReadyForRepairFromPickup = async (order: Order) => {
+        if (!order || !order.id || !order.processing) {
+            toast.error("Action Failed", { description: "Order data is incomplete." });
+            return;
+        }
+        // Check if status is appropriate
+        if (order.processing.initialMethod !== 'pickup' || order.processing.status !== 'in_progress' || order.processing.repairStatus !== 'Item Picked Up (KitFix)') {
+            toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not marked as picked up by KitFix.`);
+            return;
+        }
+        if (order.processing.repairStatus === 'Ready for Repair (from Pickup)') {
+            toast.info(`Order ${order.id.slice(0, 6).toUpperCase()} is already marked ready for repair.`);
+            return;
+        }
+
+
+        // Updates: Change repairStatus
+        const updates: Partial<Order> = {
+            processing: {
+                ...order.processing,
+                repairStatus: "Ready for Repair (from Pickup)" as RepairStatus, // Signal ready for Repair Manager
+                // Keep main status as 'in_progress'
+            },
+        };
+
+        const success = await updatePickupOrder(order.id, updates);
+        if (success) {
+            toast.success("Order Ready for Repair", {
+                description: `Order ${order.id.slice(0, 6).toUpperCase()} sent to Repair Queue.`,
+            });
+            // onSnapshot will update the list and filtering
         }
     };
 
@@ -307,7 +332,6 @@ const PickupScheduler: React.FC = () => {
         <div className="space-y-6">
             {/* Filter and Search Controls */}
             <div className="flex flex-col sm:flex-row justify-between gap-4 mb-6">
-                {/* Filter Buttons */}
                 <div className="flex flex-wrap gap-3">
                     {statusOptions.map(status => (
                         <Button
@@ -453,6 +477,20 @@ const PickupScheduler: React.FC = () => {
                                                 <CheckCircle className="mr-1 h-4 w-4" /> Mark Picked Up
                                             </Button>
                                         )}
+
+                                        {/* Button to mark as Ready for Repair */}
+                                        {repairStatus === 'Item Picked Up (KitFix)' && (
+                                            <Button
+                                                size="sm"
+                                                variant="default" // Use default variant
+                                                onClick={() => markReadyForRepairFromPickup(order)}
+                                                disabled={isUpdatingOrderId === order.id}
+                                            >
+                                                {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                                <ArrowRight className="mr-1 h-4 w-4" /> Send to Repair
+                                            </Button>
+                                        )}
+
 
                                         {/* Message if picked up and ready for repair */}
                                         {repairStatus === 'Ready for Repair (from Pickup)' && (

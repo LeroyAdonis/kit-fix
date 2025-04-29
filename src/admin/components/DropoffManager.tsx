@@ -1,16 +1,18 @@
+// src/admin/components/DropoffManager.tsx
 import React, { useEffect, useState } from "react";
 import {
     collection,
-    getDocs,
+    getDocs, // Might not need getDocs anymore if using onSnapshot
     query,
-    where, // Keep where
+    where,
     orderBy,
     doc,
     updateDoc,
     serverTimestamp,
     Timestamp,
     getDoc,
-    // or, // <-- Remove 'or' import
+    // Import onSnapshot
+    onSnapshot,
 } from "firebase/firestore";
 import { db } from "@/firebaseConfig";
 import { format } from "date-fns";
@@ -37,7 +39,7 @@ import {
 } from "lucide-react";
 import { toast } from 'sonner';
 
-// Import types - Updated
+// Import types
 import { Order, OrderStatus, InitialMethod, FulfillmentMethod, RepairStatus, PaymentStatus } from "@/types/order";
 
 // Define filter status options for Dropoff Manager
@@ -68,86 +70,92 @@ const DropoffManager: React.FC = () => {
 
 
     useEffect(() => {
-        const fetchOrders = async () => {
-            setLoading(true);
-            try {
-                const ordersRef = collection(db, "orders");
+        setLoading(true); // Start loading when the effect runs
 
-                // Query to fetch ALL orders in 'in_progress' OR 'awaiting_fulfillment' status
-                // This avoids the complex `or` query syntax combining method and status.
-                // Requires index on processing.status.
-                let q = query(
-                    ordersRef,
-                    where('processing.status', 'in', ['in_progress', 'awaiting_fulfillment'] as OrderStatus[]), // Fetch relevant main statuses
-                    orderBy("createdAt", "desc") // Order by creation date
-                );
+        const ordersRef = collection(db, "orders");
 
-                const snapshot = await getDocs(q);
-                const fetchedOrders = snapshot.docs.map((d) => {
-                    const data = d.data();
-                    return {
-                        id: d.id,
-                        ...data,
-                        contactInfo: data.contactInfo || {},
-                        processing: data.processing || {},
-                        payment: data.payment || {},
-                    };
-                }) as Order[];
+        // Query to fetch ALL orders in 'in_progress' OR 'awaiting_fulfillment' status
+        // This avoids complex `or` query syntax and is necessary for client-side filtering by method/specific repair status.
+        // Requires index on processing.status.
+        const q = query(
+            ordersRef,
+            where('processing.status', 'in', ['in_progress', 'awaiting_fulfillment'] as OrderStatus[]), // Fetch relevant main statuses
+            orderBy("createdAt", "desc") // Order by creation date
+        );
 
-                // DEBUG: Log fetched orders before client-side filtering
-                console.log("DropoffManager: Fetched orders from Firestore (in_progress or awaiting_fulfillment):", fetchedOrders);
+        // Use onSnapshot for real-time updates
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            console.log("DropoffManager: Received snapshot update.");
+            const fetchedOrders = snapshot.docs.map((d) => {
+                const data = d.data();
+                return {
+                    id: d.id,
+                    ...data,
+                    contactInfo: data.contactInfo || {},
+                    processing: data.processing || {},
+                    payment: data.payment || {},
+                };
+            }) as Order[];
 
-
-                // Client-side filter to include only orders relevant to THIS MANAGER
-                // Orders must be:
-                // 1. initialMethod == 'dropoff' AND repairStatus is one of the dropoffInitialStatuses
-                // OR
-                // 2. fulfillmentMethod == 'pickup' AND repairStatus is one of the customerPickupStatuses
-                const relevantOrders = fetchedOrders.filter(order => {
-                    if (!order.processing || !order.processing.repairStatus) return false; // Must have processing & repairStatus
-
-                    const { initialMethod, fulfillmentMethod, repairStatus } = order.processing;
-
-                    // Check if it matches the criteria for the initial dropoff phase
-                    const isInitialDropoff = initialMethod === 'dropoff' && dropoffInitialStatuses.includes(repairStatus);
-
-                    // Check if it matches the criteria for the final customer pickup phase
-                    const isCustomerPickup = fulfillmentMethod === 'pickup' && customerPickupStatuses.includes(repairStatus);
-
-                    // Include the order if it matches either phase criteria
-                    return isInitialDropoff || isCustomerPickup;
-                });
+            // DEBUG: Log fetched orders from Firestore
+            console.log("DropoffManager: Fetched orders from Firestore (in_progress or awaiting_fulfillment):", fetchedOrders);
 
 
-                // DEBUG: Log orders after filtering by relevance to this manager
-                console.log("DropoffManager: Filtered orders by relevance to this manager:", relevantOrders);
+            // Client-side filter to include only orders relevant to THIS MANAGER VIEW
+            // Orders must be:
+            // 1. initialMethod == 'dropoff' AND repairStatus is one of the dropoffInitialStatuses
+            // OR
+            // 2. fulfillmentMethod == 'pickup' AND repairStatus is one of the customerPickupStatuses
+            const relevantOrders = fetchedOrders.filter(order => {
+                if (!order.processing || !order.processing.repairStatus || !order.processing.initialMethod || !order.processing.fulfillmentMethod) {
+                    // console.warn("Skipping order with incomplete processing data:", order.id, order.processing);
+                    return false; // Must have essential processing fields
+                }
+
+                const { initialMethod, fulfillmentMethod, repairStatus } = order.processing;
+
+                // Check if it matches the criteria for the initial dropoff phase
+                const isInitialDropoff = initialMethod === 'dropoff' && dropoffInitialStatuses.includes(repairStatus);
+
+                // Check if it matches the criteria for the final customer pickup phase
+                const isCustomerPickup = fulfillmentMethod === 'pickup' && customerPickupStatuses.includes(repairStatus);
+
+                // Include the order if it matches either phase criteria
+                return isInitialDropoff || isCustomerPickup;
+            });
+
+            // DEBUG: Log orders after filtering by relevance to this manager
+            console.log("DropoffManager: Filtered orders by relevance to this manager:", relevantOrders);
 
 
-                setOrders(relevantOrders); // Set the state with relevant orders
+            setOrders(relevantOrders); // Set the state with relevant orders
+            setLoading(false); // Set loading to false AFTER receiving the first snapshot
+        }, (error) => {
+            console.error("DropoffManager: Error fetching real-time orders:", error);
+            toast.error("Real-time updates failed for dropoff/pickup orders.");
+            setLoading(false); // Ensure loading is off on error
+        });
 
-            } catch (error) {
-                console.error("Error fetching dropoff orders:", error);
-                toast.error("Error fetching dropoff orders", {
-                    description: "Could not load orders for Dropoff Manager.",
-                });
-            } finally {
-                setLoading(false);
-            }
+        // Cleanup function: Unsubscribe when the component unmounts or the effect re-runs
+        return () => {
+            console.log("DropoffManager: Unsubscribing from snapshot listener.");
+            unsubscribe();
         };
 
-        // Fetch orders whenever the component mounts or db changes.
-        // filterStatus and searchTerm changes are handled by client-side filtering below.
-        fetchOrders();
-        // filterStatus is needed in dependency array because it affects which orders are *relevant* after fetching
-        // Added db to dependencies (unlikely to change, but good practice)
-    }, [db]); // Dependency array - filterStatus is NOT needed here as it's client-side filtering
+        // Dependencies: Add dependencies that could change the query.
+        // The query depends on db. The client-side filtering depends on filterStatus and searchTerm,
+        // but we want to refetch the *full set* of relevant orders when filterStatus changes
+        // so client-side filtering can re-apply correctly. searchTerm is purely client-side.
+    }, [filterStatus, db]); // Depend on filterStatus to re-run fetch/listener
 
 
     // Generic update function for dropoff orders
+    // Removed local state update logic to rely solely on onSnapshot
     const updateDropoffOrder = async (orderId: string, updates: Partial<Order>): Promise<boolean> => {
         setIsUpdatingOrderId(orderId); // Set updating state
         try {
             const orderRef = doc(db, "orders", orderId);
+            // Fetch existing is still useful for merging nested objects accurately before sending to Firestore
             const orderSnap = await getDoc(orderRef);
             const existingOrder = orderSnap.exists() ? orderSnap.data() as Order : null;
 
@@ -157,6 +165,7 @@ const DropoffManager: React.FC = () => {
                 return false;
             }
 
+            // Deep merge processing object if updates.processing exists
             const updatedProcessing = updates.processing
                 ? { ...existingOrder.processing, ...updates.processing }
                 : existingOrder.processing;
@@ -169,15 +178,9 @@ const DropoffManager: React.FC = () => {
 
             await updateDoc(orderRef, finalUpdates);
 
-            // Optimistically update local state
-            const updatedOrder = { ...existingOrder, ...finalUpdates }; // Merge locally
-            if (finalUpdates.processing) updatedOrder.processing = { ...existingOrder.processing, ...finalUpdates.processing };
-            if (finalUpdates.payment) updatedOrder.payment = { ...existingOrder.payment, ...finalUpdates.payment };
+            // Rely on onSnapshot to update the 'orders' state
 
-
-            setOrders((prev) =>
-                prev.map((o) => (o && o.id === orderId ? updatedOrder : o)) // Check for 'o' safety
-            );
+            console.log(`Order ${orderId} Firestore updated.`);
 
             return true;
         } catch (error) {
@@ -185,6 +188,7 @@ const DropoffManager: React.FC = () => {
             toast.error("Update Failed", {
                 description: `Could not update order ${orderId.slice(0, 6).toUpperCase()}.`,
             });
+            // Consider reverting local state on error (complex with optimistic updates)
             return false;
         } finally {
             setIsUpdatingOrderId(null); // Reset updating state
@@ -221,7 +225,7 @@ const DropoffManager: React.FC = () => {
             toast.success("Order Dropped Off", {
                 description: `Order ${order.id.slice(0, 6).toUpperCase()} marked as dropped off.`,
             });
-            // The order will stay in this manager's view but its badge/available actions will change
+            // onSnapshot will update the list and filtering
         }
     };
 
@@ -252,7 +256,7 @@ const DropoffManager: React.FC = () => {
             toast.success("Order Ready for Repair", {
                 description: `Order ${order.id.slice(0, 6).toUpperCase()} marked as ready for repair.`,
             });
-            // The order will stay in this manager's view but its badge/available actions will change
+            // onSnapshot will update the list and filtering
         }
     };
 

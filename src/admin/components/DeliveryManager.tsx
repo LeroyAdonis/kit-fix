@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import {
     collection,
-    getDocs,
+    getDocs, // Might not need getDocs anymore if using onSnapshot
     query,
     where,
     orderBy,
@@ -10,7 +10,9 @@ import {
     updateDoc,
     serverTimestamp,
     Timestamp,
-    getDoc,
+    getDoc, // Needed for update logic
+    // Import onSnapshot
+    onSnapshot,
 } from "firebase/firestore";
 import { db } from "@/firebaseConfig";
 import { format } from "date-fns";
@@ -56,7 +58,7 @@ const DeliveryManager: React.FC = () => {
     const [orders, setOrders] = useState<Order[]>([]);
     const [loading, setLoading] = useState(true);
     // Corrected line: Added = useState()
-    const [filterStatus, setFilterStatus] = useState<DeliveryFilterStatus>('Ready for KitFix Delivery'); // State for filter
+    const [filterStatus, setFilterStatus] = useState<DeliveryFilterStatus>('all'); // Default filter to 'all' or an initial state
     const [searchTerm, setSearchTerm] = useState(''); // State for search term
     const [isUpdatingOrderId, setIsUpdatingOrderId] = useState<string | null>(null);
 
@@ -64,66 +66,74 @@ const DeliveryManager: React.FC = () => {
     const statusOptions: DeliveryFilterStatus[] = ['all', ...relevantStatuses];
 
     useEffect(() => {
-        const fetchOrders = async () => {
-            setLoading(true);
-            try {
-                const ordersRef = collection(db, "orders");
+        setLoading(true); // Start loading when the effect runs
 
-                // Query for orders in 'awaiting_fulfillment' status, and fulfillmentMethod === 'delivery'
-                // AND repairStatus is relevant to this manager's view (client-side filter)
-                let q = query(
-                    ordersRef,
-                    where('processing.status', '==', 'awaiting_fulfillment' as OrderStatus),
-                    where('processing.fulfillmentMethod', '==', 'delivery' as FulfillmentMethod), // Fulfillment method is delivery
-                    orderBy("createdAt", "desc") // Order by creation date
-                );
+        const ordersRef = collection(db, "orders");
 
-                const snapshot = await getDocs(q);
-                const fetchedOrders = snapshot.docs.map((d) => {
-                    const data = d.data();
-                    return {
-                        id: d.id,
-                        ...data,
-                        contactInfo: data.contactInfo || {},
-                        processing: data.processing || {},
-                        payment: data.payment || {},
-                    };
-                }) as Order[];
+        // Query for orders in 'awaiting_fulfillment' status, and fulfillmentMethod === 'delivery'
+        // AND repairStatus is relevant to this manager's view (client-side filter)
+        const q = query(
+            ordersRef,
+            where('processing.status', '==', 'awaiting_fulfillment' as OrderStatus),
+            where('processing.fulfillmentMethod', '==', 'delivery' as FulfillmentMethod), // Fulfillment method is delivery
+            orderBy("createdAt", "desc") // Order by creation date
+        );
 
-                // DEBUG: Log fetched orders before client-side filtering
-                console.log("DeliveryManager: Fetched orders from Firestore (awaiting_fulfillment, fulfillmentMethod=delivery):", fetchedOrders);
+        // Use onSnapshot for real-time updates
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            console.log("DeliveryManager: Received snapshot update.");
+            const fetchedOrders = snapshot.docs.map((d) => {
+                const data = d.data();
+                return {
+                    id: d.id,
+                    ...data,
+                    contactInfo: data.contactInfo || {},
+                    processing: data.processing || {},
+                    payment: data.payment || {},
+                };
+            }) as Order[];
 
-
-                // Client-side filter to ensure they have a repair status relevant to this manager
-                const relevantOrders = fetchedOrders.filter(order =>
-                    order.processing?.repairStatus && relevantStatuses.includes(order.processing.repairStatus)
-                );
-
-                // DEBUG: Log orders after filtering by relevantStatuses
-                console.log("DeliveryManager: Filtered orders by relevantStatuses:", relevantOrders);
+            // DEBUG: Log fetched orders from Firestore
+            console.log("DeliveryManager: Fetched orders from Firestore (awaiting_fulfillment, fulfillmentMethod=delivery):", fetchedOrders);
 
 
-                setOrders(relevantOrders); // Set the state with relevant orders
+            // Client-side filter to ensure they have a repair status relevant to this manager
+            // This filters down the fetched orders based on the specific repairStatus values this manager handles.
+            const relevantOrders = fetchedOrders.filter(order =>
+                order.processing?.repairStatus && relevantStatuses.includes(order.processing.repairStatus)
+            );
 
-            } catch (error) {
-                console.error("Error fetching KitFix delivery orders:", error);
-                toast.error("Error fetching KitFix delivery orders", {
-                    description: "Could not load orders for Delivery Manager.",
-                });
-            } finally {
-                setLoading(false);
-            }
+            // DEBUG: Log orders after filtering by relevantStatuses
+            console.log("DeliveryManager: Filtered orders by relevantStatuses:", relevantOrders);
+
+
+            setOrders(relevantOrders); // Set the state with relevant orders
+            setLoading(false); // Set loading to false AFTER receiving the first snapshot
+        }, (error) => {
+            console.error("DeliveryManager: Error fetching real-time orders:", error);
+            toast.error("Real-time updates failed for KitFix delivery orders.");
+            setLoading(false); // Ensure loading is off on error
+        });
+
+        // Cleanup function: Unsubscribe when the component unmounts or the effect re-runs
+        return () => {
+            console.log("DeliveryManager: Unsubscribing from snapshot listener.");
+            unsubscribe();
         };
 
-        fetchOrders();
-    }, [db]); // Dependency array - filter/search are client-side
+        // Dependencies: Add dependencies that could change the query.
+        // The query depends on db. filterStatus and searchTerm affect client-side filtering,
+        // but they don't need to trigger a re-fetch from Firestore in this setup.
+    }, [filterStatus, db]); // Depend on filterStatus and db
 
 
     // Generic update function
+    // Removed local state update logic to rely solely on onSnapshot
     const updateDeliveryOrder = async (orderId: string, updates: Partial<Order>): Promise<boolean> => {
-        setIsUpdatingOrderId(orderId);
+        setIsUpdatingOrderId(orderId); // Set updating state
         try {
             const orderRef = doc(db, "orders", orderId);
+            // Fetch existing is still useful for merging nested objects accurately before sending to Firestore
             const orderSnap = await getDoc(orderRef);
             const existingOrder = orderSnap.exists() ? orderSnap.data() as Order : null;
 
@@ -145,15 +155,9 @@ const DeliveryManager: React.FC = () => {
 
             await updateDoc(orderRef, finalUpdates);
 
-            // Optimistically update local state
-            const updatedOrder = { ...existingOrder, ...finalUpdates };
-            if (finalUpdates.processing) updatedOrder.processing = { ...existingOrder.processing, ...finalUpdates.processing };
-            if (finalUpdates.payment) updatedOrder.payment = { ...existingOrder.payment, ...finalUpdates.payment };
+            // Rely on onSnapshot to update the 'orders' state
 
-
-            setOrders((prev) =>
-                prev.map((o) => (o && o.id === orderId ? updatedOrder : o)) // Check for 'o' safety
-            );
+            console.log(`Order ${orderId} Firestore updated.`);
 
             return true;
         } catch (error) {
@@ -163,7 +167,7 @@ const DeliveryManager: React.FC = () => {
             });
             return false;
         } finally {
-            setIsUpdatingOrderId(null);
+            setIsUpdatingOrderId(null); // Reset updating state
         }
     };
 

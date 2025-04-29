@@ -435,7 +435,7 @@ const Dashboard = () => {
                                                 </DialogHeader>
 
                                                 {/* Progress Stepper */}
-                                                <div className="py-4">
+                                                <div className="py-4 flex flex-col space-between">
                                                     <h3 className="text-lg font-semibold mb-4">Order Progress</h3>
                                                     {order.processing ? (
                                                         <ProgressStepper
@@ -449,13 +449,13 @@ const Dashboard = () => {
                                                 </div>
 
 
-                                                <Separator className="my-4" />
+                                                {/* <Separator className="my-4" /> */}
 
                                                 {/* Detailed Order Info */}
                                                 {/* Changed grid to md:grid-cols-2 */}
                                                 <div className="space-y-4 text-gray-700 text-sm">
                                                     <h3 className="text-lg font-semibold mb-2">Details</h3>
-                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                    <div className="grid grid-cols-1 md:grid-cols-1 gap-4">
                                                         {/* Added break-words to spans with potentially long values */}
                                                         <div className="flex items-center gap-2">
                                                             <Tag className="h-4 w-4 text-blue-500 shrink-0" /> {/* shrink-0 prevents icon shrinking */}
@@ -547,20 +547,20 @@ const Dashboard = () => {
                                                     </div>
 
                                                     {/* Image Carousel (using order.photos) */}
-                                                    {order.photos && order.photos.length > 0 && (
+                                                    {/* {order.photos && order.photos.length > 0 && (
                                                         <div className="py-4">
                                                             <h3 className="text-lg font-semibold mb-4">Uploaded Photos</h3>
-                                                            <OrderImageCarousel images={order.photos} /> {/* Pass order.photos */}
+                                                            <OrderImageCarousel images={order.photos} /> {/* Pass order.photos 
                                                         </div>
-                                                    )}
+                                                    )}*/}
 
                                                     <Separator className="my-4" />
 
                                                     {/* Contact Info in Dialog */}
                                                     {order.contactInfo && (
-                                                        <div className="space-y-2 text-gray-700 text-sm">
+                                                        <div className=" text-gray-700 text-sm">
                                                             <h3 className="text-lg font-semibold mb-2">Contact Information</h3>
-                                                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                                                 <div className="flex items-center gap-2">
                                                                     <User className="h-4 w-4 text-gray-500 shrink-0" />
                                                                     <span>{order.contactInfo?.name || 'N/A'}</span>

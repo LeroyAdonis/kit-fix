@@ -11,13 +11,13 @@ const nodemailer = require("nodemailer"); // Use require for nodemailer
 initializeApp();
 
 // Use Firestore emulator if running locally
-if (process.env.FIRESTORE_EMULATOR_HOST) {
-  const firestore = getFirestore();
-  firestore.settings({
-    host: process.env.FIRESTORE_EMULATOR_HOST,
-    ssl: false
-  });
-}
+// if (process.env.FIRESTORE_EMULATOR_HOST) {
+//   const firestore = getFirestore();
+//   firestore.settings({
+//     host: process.env.FIRESTORE_EMULATOR_HOST,
+//     ssl: false
+//   });
+// }
 
 // --- Nodemailer Configuration ---
 // Configure the email transport using the Nodemailer library.

@@ -1,5 +1,6 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React from "react";
-import { CheckCircle, Clock, PackageCheck, Truck } from "lucide-react";
+import { CheckCircle, PackageCheck, Truck } from "lucide-react";
 
 interface OrderStepTrackerProps {
     order: any;
@@ -14,10 +15,10 @@ interface OrderStepTrackerProps {
  * @returns {React.ReactElement}
  */
 const OrderStepTracker: React.FC<OrderStepTrackerProps> = ({ order }) => {
-    const { processing = {}, status = {} } = order;
+    const { processing = {} } = order;
 
     const isPickup = processing.deliveryMethod === "pickup";
-    const isDropoff = processing.deliveryMethod === "dropoff";
+    // const isDropoff = processing.deliveryMethod === "dropoff";
 
     const steps = [
         {

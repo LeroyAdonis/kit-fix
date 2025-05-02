@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Menu, Shirt, X } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthState } from "react-firebase-hooks/auth";
@@ -9,7 +9,7 @@ const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [activeSection, setActiveSection] = useState('');
-  const [user, loading, error] = useAuthState(auth);
+  const [user] = useAuthState(auth);
   const location = useLocation();
   const navigate = useNavigate();
 

@@ -1,9 +1,9 @@
-import React from 'react';
+
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 const AuthLayout = () => {
-    const { user, isAuthenticated, isLoading } = useAuth();
+    const { isAuthenticated, isLoading } = useAuth();
     const location = useLocation();
 
     const protectedRoutes = ['/dashboard', '/schedule-service'];

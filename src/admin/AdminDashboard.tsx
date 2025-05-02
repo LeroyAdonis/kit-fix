@@ -1,4 +1,4 @@
-import React from "react";
+
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import OrdersTable from "./components/OrdersTable";
@@ -21,7 +21,7 @@ import RepairManager from "./components/RepairManager";
 const AdminDashboard = () => {
     return (
         <div className="min-h-screen flex flex-col bg-gray-50 mt-15">
-            <Header admin />
+            <Header />
 
             <main className="flex-grow container-custom glass-card xl:mx-20 sm:mx-4 md:mx-10 lg:mx-20 my-10 rounded-2xl shadow-lg p-6">
                 <h1 className="text-3xl font-bold text-jet-black mb-8">KitFix Admin Dashboard</h1>

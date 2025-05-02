@@ -1,6 +1,6 @@
 // src/types/order.ts
 
-import { Timestamp } from "firebase/firestore";
+import { Timestamp, FieldValue } from "firebase/firestore";
 
 // Define core processing statuses
 export type OrderStatus =
@@ -18,6 +18,8 @@ export type RepairStatus =
   | "Routed for Pickup (KitFix)" // After admin routes a KitFix pickup order (OrdersTable)
   | "Item Dropped Off" // Set by DropoffManager (Initial phase)
   | "Item Picked Up (KitFix)" // Set by PickupScheduler (Initial phase)
+  | "Scheduled for Pickup (KitFix)" // Set by PickupScheduler (Initial phase) - Signals ready for RepairManager
+  | "Sent to Repair Manager" // Set by DropoffManager (Initial phase) - Signals ready for RepairManager
   | "Ready for Repair (from Dropoff)" // Set by DropoffManager (Initial phase) - Signals ready for RepairManager
   | "Ready for Repair (from Pickup)" // Set by PickupScheduler (Initial phase) - Signals ready for RepairManager
   | "Assigned" // Set by RepairManager
@@ -45,8 +47,21 @@ export interface ContactInfo {
 
 // Consolidated processing information
 export interface ProcessingInfo {
+  actualPickupDate: Timestamp;
+  pickupStatus: string;
+  actualDeliveryDate: Timestamp;
+  deliveryStatus: string;
+  actualDropoffDate: Timestamp;
+  dropoffStatus: string;
+  deliveryMethod: string; // e.g., "FedEx", "UPS", "DHL" - used for delivery fulfillment
+  scheduledDropoffDate: Timestamp;
+  scheduledPickupDate: Timestamp;
+  scheduledDeliveryDate: Timestamp;
+  dropoffLocation: string; // Address where customer drops off (e.g., Store Address)
+  pickupLocation: string; // Address where KitFix picks up (likely same as contactInfo.address) - Redundant with contactInfo.address if we save there. Let's rely on contactInfo.address for KitFix pickup.
   status: OrderStatus; // Main status: pending, in_progress, awaiting_fulfillment, fulfilled, cancelled
   repairStatus: RepairStatus; // Detailed status within the workflow
+  deliveryAddress?: string;
 
   initialMethod: InitialMethod; // How it gets TO KitFix
   fulfillmentMethod: FulfillmentMethod; // How it gets BACK to customer
@@ -91,7 +106,7 @@ export interface PaymentInfo {
   amount: number; // Total amount, should be required
   method?: string;
   reference?: string;
-  paidAt?: Timestamp;
+  paidAt?: Timestamp | FieldValue; // Timestamp when payment was made
 }
 
 export interface Order {
@@ -111,9 +126,10 @@ export interface Order {
   processing: ProcessingInfo; // Workflow state
 
   payment: PaymentInfo; // Payment state
+  readyForFulfillmentAt?: Timestamp;
 
-  createdAt: Timestamp; // When the order was first created
-  updatedAt: Timestamp; // When the order was last updated
+  createdAt: Timestamp | FieldValue; // When the order was first created
+  updatedAt: Timestamp | FieldValue; // When the order was last updated
   stepCompleted?: string; // Track customer journey step
 
   // Add other top-level order fields here

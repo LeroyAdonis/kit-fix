@@ -1,4 +1,3 @@
-import React from 'react';
 import { Sparkles, Truck, ShieldCheck } from 'lucide-react';
 
 const services = [

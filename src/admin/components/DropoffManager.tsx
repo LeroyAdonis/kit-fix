@@ -1,8 +1,8 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 // src/admin/components/DropoffManager.tsx
 import React, { useEffect, useState } from "react";
 import {
     collection,
-    getDocs, // Might not need getDocs anymore if using onSnapshot
     query,
     where,
     orderBy,
@@ -24,23 +24,17 @@ import { Input } from "@/components/ui/input"; // For search
 import {
     Hash,
     Truck, // Method icon
-    User, // Name icon
     MapPin, // Location icon
     CalendarDays, // Date icon
-    DollarSign, // Price icon
-    CreditCard, // Payment icon
     Search, // Search icon
     Loader2, // Loading spinner
-    ArrowRight, // Routing icon
     Tag, // Repair Type
-    Package, // Notes
-    Clock, // In Repair icon / Status icon
-    CheckCircle // Completed icon / Picked icon
+    Package
 } from "lucide-react";
 import { toast } from 'sonner';
 
 // Import types
-import { Order, OrderStatus, InitialMethod, FulfillmentMethod, RepairStatus, PaymentStatus } from "@/types/order";
+import { Order, OrderStatus, RepairStatus } from "@/types/order";
 
 // Define filter status options for Dropoff Manager
 // This manager shows orders in the initial dropoff phase OR the final customer pickup phase
@@ -267,40 +261,6 @@ const DropoffManager: React.FC = () => {
     // This manager just needs to display orders in this state and provide the final action.
 
     // Action: Mark as Scheduled for Customer Pickup (Optional step in fulfillment)
-    const markScheduledForCustomerPickup = async (order: Order, scheduleDate: string) => {
-        if (!order || !order.id || !order.processing) {
-            toast.error("Action Failed", { description: "Order data is incomplete." });
-            return;
-        }
-        // Check if order is in the correct phase/status
-        if (order.processing.fulfillmentMethod !== 'pickup' || order.processing.status !== 'awaiting_fulfillment' || order.processing.repairStatus !== 'Ready for Customer Pickup') {
-            toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not ready for customer pickup scheduling.`);
-            return;
-        }
-        if (!scheduleDate) {
-            toast.warning("Please provide a schedule date.");
-            return;
-        }
-
-        // Convert date string to Timestamp
-        const date = new Date(scheduleDate);
-        if (isNaN(date.getTime())) {
-            toast.error("Invalid date selected.");
-            return;
-        }
-        const scheduledTimestamp = Timestamp.fromDate(date);
-
-        const updates: Partial<Order> = {
-            processing: {
-                ...order.processing,
-                repairStatus: "Scheduled for Pickup (Customer)" as RepairStatus, // Update repair status
-                scheduledCustomerPickupDate: scheduledTimestamp, // Save scheduled date as Timestamp
-                // Keep main status as 'awaiting_fulfillment'
-            },
-        };
-        const success = await updateDropoffOrder(order.id, updates);
-        if (success) toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} scheduled for customer pickup.`);
-    };
 
 
     // Action: Mark as Picked Up by Customer
@@ -314,7 +274,7 @@ const DropoffManager: React.FC = () => {
             toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not ready to be marked as picked up by customer.`);
             return;
         }
-        if (order.processing.repairStatus === 'Picked Up by Customer') {
+        if (order.processing.repairStatus as RepairStatus === 'Picked Up by Customer') {
             toast.info(`Order ${order.id.slice(0, 6).toUpperCase()} is already marked as picked up by customer.`);
             return;
         }

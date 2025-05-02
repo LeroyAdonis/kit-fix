@@ -9,7 +9,6 @@ import {
     doc,
     updateDoc,
     getDoc, // <-- Ensure getDoc is imported
-    Timestamp,
     serverTimestamp,
     // <-- Ensure DialogDescription is imported
 } from "firebase/firestore";
@@ -46,7 +45,7 @@ import OrderStepTracker from "@/components/OrderStepTracker";
 
 // Import the updated Order interfaces
 // Removed unused statuses as they are not used in THIS file's logic
-import { Order, OrderStatus, PaymentStatus, RepairStatus, InitialMethod, FulfillmentMethod } from "@/types/order";
+import { Order, OrderStatus, PaymentStatus, RepairStatus } from "@/types/order";
 
 // Import sonner toast
 import { toast } from 'sonner';
@@ -202,7 +201,7 @@ const OrdersTable: React.FC = () => {
         const initialMethod = order.processing.initialMethod;
 
         // Prepare updates for routing
-        let updates: Partial<Order> = {
+        const updates: Partial<Order> = {
             processing: {
                 ...order.processing,
                 status: "in_progress" as OrderStatus, // Change main status to in_progress
@@ -211,16 +210,13 @@ const OrdersTable: React.FC = () => {
             updatedAt: serverTimestamp(),
         };
 
-        let destinationManager: string;
 
         switch (initialMethod) { // <-- Use initialMethod here
             case 'dropoff':
-                destinationManager = 'Dropoff Manager';
                 updates.processing!.repairStatus = "Routed to Dropoff" as RepairStatus;
                 // We are no longer setting dropoffStatus here. DropoffManager handles its own sub-statuses.
                 break;
             case 'pickup':
-                destinationManager = 'Pickup Scheduler'; // <-- Route to Pickup Scheduler for initial pickup
                 updates.processing!.repairStatus = "Routed for Pickup (KitFix)" as RepairStatus; // <-- New status name
                 // We are no longer setting pickupStatus here. PickupScheduler handles its own sub-statuses.
                 break;

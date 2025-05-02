@@ -2,7 +2,6 @@
 import React, { useEffect, useState } from "react";
 import {
     collection,
-    getDocs, // Might not need getDocs anymore if using onSnapshot
     query,
     where,
     orderBy,
@@ -15,7 +14,6 @@ import {
     onSnapshot,
 } from "firebase/firestore";
 import { db } from "@/firebaseConfig";
-import { format } from "date-fns";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -24,24 +22,19 @@ import { Input } from "@/components/ui/input"; // For search
 import {
     Hash,
     Truck, // Method icon
-    User, // Name icon
-    ShieldCheck, // Repair icon
     Clock, // In Repair icon
     CheckCircle, // Completed icon
-    MapPin, // Location icon
     Search, // Search icon
     Loader2, // Loading spinner
     ArrowRight, // Routing icon
     Tag, // Repair Type
-    DollarSign, // Price
-    CalendarDays, // Date
     Package, // Notes
     UserCog // Assigned icon
 } from "lucide-react";
 import { toast } from 'sonner';
 
 // Import types
-import { Order, OrderStatus, InitialMethod, FulfillmentMethod, RepairStatus, PaymentStatus, ProcessingInfo } from "@/types/order"; // Ensure ProcessingInfo is imported for updates
+import { Order, OrderStatus, RepairStatus, ProcessingInfo } from "@/types/order"; // Ensure ProcessingInfo is imported for updates
 
 // Define filter status options for Repair Manager
 // These are the statuses an order is *in* while being managed by the Repair Manager
@@ -179,7 +172,7 @@ const RepairManager: React.FC = () => {
             return;
         }
         // Check if status is appropriate for assigning (incoming statuses to repair)
-        if (order.processing.repairStatus !== 'Sent to Repair Manager' && order.processing.repairStatus !== 'Ready for Repair (from Dropoff)' && order.processing.repairStatus !== 'Ready for Repair (from Pickup)') { // Include all incoming repair statuses
+        if (!(['Sent to Repair Manager', 'Ready for Repair (from Dropoff)', 'Ready for Repair (from Pickup)'] as RepairStatus[]).includes(order.processing.repairStatus)) { // Include all incoming repair statuses
             toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not ready for assignment.`);
             return;
         }
@@ -264,23 +257,20 @@ const RepairManager: React.FC = () => {
 
 
         let nextRepairStatus: RepairStatus;
-        let destinationManager: string;
         // No need to copy existing processing state here, updateRepairOrder fetches it
-        let processingUpdates: Partial<ProcessingInfo> = {
+        const processingUpdates: Partial<ProcessingInfo> = {
             status: 'awaiting_fulfillment' as OrderStatus, // <-- CHANGE main status
             // repairStatus will be set below
         };
 
         if (order.processing.fulfillmentMethod === 'pickup') { // <-- CHECK FULFILLMENT METHOD
             nextRepairStatus = "Ready for Customer Pickup" as RepairStatus;
-            destinationManager = "Dropoff Manager (Customer Pickup)";
             processingUpdates.repairStatus = nextRepairStatus;
             // No need to set pickupStatus here, DropoffManager manages its specific statuses
             // processingUpdates.pickupStatus = "awaiting_pickup" as PickupStatus; // REMOVE
 
         } else if (order.processing.fulfillmentMethod === 'delivery') { // Check fulfillment method
             nextRepairStatus = "Ready for KitFix Delivery" as RepairStatus;
-            destinationManager = "Delivery Manager";
             processingUpdates.repairStatus = nextRepairStatus;
             // No need to set deliveryStatus here, DeliveryManager manages its specific statuses
             // processingUpdates.deliveryStatus = "awaiting_delivery" as DeliveryStatus; // REMOVE
@@ -292,7 +282,10 @@ const RepairManager: React.FC = () => {
         }
 
         const updates: Partial<Order> = {
-            processing: processingUpdates, // Use the constructed processing updates
+            processing: {
+                ...order.processing, // Merge with existing processing to ensure required fields are present
+                ...processingUpdates, // Apply updates
+            }, // Use the constructed processing updates
             readyForFulfillmentAt: Timestamp.now(), // Timestamp when ready for fulfillment
             updatedAt: serverTimestamp(),
         };

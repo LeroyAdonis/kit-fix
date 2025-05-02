@@ -1,14 +1,15 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { doc, getDoc, updateDoc, serverTimestamp, Timestamp } from "firebase/firestore";
-import { db, auth } from "@/firebaseConfig";
+import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { db } from "@/firebaseConfig";
 import { toast } from "sonner"; // Use sonner toast
 
 // Import types - Updated to use InitialMethod and FulfillmentMethod
-import { Order, OrderStatus, InitialMethod, FulfillmentMethod, ContactInfo, ProcessingInfo } from '@/types/order';
+import { Order, InitialMethod, FulfillmentMethod, ContactInfo, ProcessingInfo } from '@/types/order';
 import { Loader2, MapPin } from "lucide-react"; // Import necessary icons
 import { Button } from "@/components/ui/button"; // Import Button if used in JSX
 import Header from "@/components/Header";
@@ -45,7 +46,7 @@ type ScheduleFormData = z.infer<typeof scheduleSchema>;
 const ScheduleService = () => {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
-    const orderId = searchParams.get("orderId");
+    const orderId = searchParams.get("orderId") || (location as any).state?.orderId;;
 
     const [pageLoading, setPageLoading] = useState(true); // Loading state for initial fetch
     const [isSaving, setIsSaving] = useState(false); // Loading state for form submission
@@ -150,7 +151,7 @@ const ScheduleService = () => {
 
         if (orderId) {
             fetchData();
-        } else if (!searchParams.get('orderId') && !location.state?.orderId) { // Check if orderId was never provided
+        } else if (!searchParams.get('orderId') && (!location as any).state?.orderId) { // Check if orderId was never provided
             setPageLoading(false);
             toast.error("Missing order ID. Please restart your repair process.");
             setTimeout(() => { navigate("/upload-photos"); }, 50); // Redirect to start
@@ -198,6 +199,12 @@ const ScheduleService = () => {
             // Determine if fulfillment method is delivery
             const isFulfillmentDelivery = formData.fulfillmentMethod === "delivery";
 
+            function removeUndefined<T extends object>(obj: T): Partial<T> {
+                return Object.fromEntries(
+                    Object.entries(obj).filter(([_, v]) => v !== undefined)
+                ) as Partial<T>;
+            }
+
             // Construct contactInfo updates
             const contactInfoUpdates: Partial<ContactInfo> = {
                 ...(existingOrderData.contactInfo || {}), // Start with existing
@@ -206,7 +213,7 @@ const ScheduleService = () => {
                 phone: formData.phone,
                 // Save delivery address in contactInfo if fulfillment method is delivery
                 // Use null to remove the field if not fulfillment delivery, ensures clean data
-                address: isFulfillmentDelivery ? (formData.deliveryAddress || null) : null, // Save if fulfillment delivery, otherwise null
+                address: isFulfillmentDelivery ? (formData.deliveryAddress || undefined) : undefined, // Save if fulfillment delivery, otherwise null
             };
 
             // Construct processing updates
@@ -224,15 +231,15 @@ const ScheduleService = () => {
                 // Method-specific location fields - use null instead of undefined
                 // These locations are less critical than contactInfo.address for delivery fulfillment
                 // You might save store address placeholders here if needed for display
-                customerDropoffLocation: formData.initialMethod === 'dropoff' ? "KitFix Store Address (Placeholder)" : null,
-                initialPickupLocation: formData.initialMethod === 'pickup' ? (formData.deliveryAddress || existingOrderData.contactInfo?.address || null) : null, // If initial is pickup, use contact address? Revisit this field's purpose. Let's use contactInfo.address for KitFix pickup.
-                customerPickupLocation: formData.fulfillmentMethod === 'pickup' ? "KitFix Store Address (Placeholder)" : null,
-                kitFixDeliveryAddress: isFulfillmentDelivery ? (formData.deliveryAddress || null) : null, // Redundant with contactInfo.address if saving there, but keep for clarity
+                customerDropoffLocation: formData.initialMethod === 'dropoff' ? "KitFix Store Address (Placeholder)" : undefined,
+                initialPickupLocation: formData.initialMethod === 'pickup' ? (formData.deliveryAddress || existingOrderData.contactInfo?.address || undefined) : undefined, // If initial is pickup, use contact address? Revisit this field's purpose. Let's use contactInfo.address for KitFix pickup.
+                customerPickupLocation: formData.fulfillmentMethod === 'pickup' ? "KitFix Store Address (Placeholder)" : undefined,
+                kitFixDeliveryAddress: isFulfillmentDelivery ? (formData.deliveryAddress || undefined) : undefined, // Redundant with contactInfo.address if saving there, but keep for clarity
             };
 
             const updates: Partial<Order> = {
-                contactInfo: contactInfoUpdates, // Use the constructed object
-                processing: processingUpdates,   // Use the constructed object
+                contactInfo: removeUndefined(contactInfoUpdates) as ContactInfo, // Use the constructed object
+                processing: removeUndefined(processingUpdates) as ProcessingInfo,   // Use the constructed object
                 stepCompleted: "schedule", // Track step completion
                 updatedAt: serverTimestamp(), // Update timestamp on server
             };

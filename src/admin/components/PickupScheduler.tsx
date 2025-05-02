@@ -1,8 +1,8 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 // src/admin/components/PickupScheduler.tsx
 import React, { useEffect, useState } from "react";
 import {
     collection,
-    getDocs, // Might not need getDocs anymore if using onSnapshot
     query,
     where,
     orderBy,
@@ -24,30 +24,26 @@ import { Input } from "@/components/ui/input"; // For search
 import {
     Hash,
     Truck, // Method icon
-    User, // Name icon
     MapPin, // Location icon (pickup address)
     CalendarDays, // Date icon
-    DollarSign, // Price icon
-    CreditCard, // Payment icon
     Search, // Search icon
     Loader2, // Loading spinner
     CheckCircle, // Picked icon
     Tag, // Repair Type
     Package, // Notes
-    Clock, // Status icon
     ArrowRight // Routing icon
 } from "lucide-react"; // Added ArrowRight icon for routing button
 import { toast } from 'sonner';
 
 // Import types - Using InitialMethod and FulfillmentMethod
-import { Order, OrderStatus, InitialMethod, FulfillmentMethod, RepairStatus, PaymentStatus } from "@/types/order";
+import { Order, OrderStatus, InitialMethod, RepairStatus } from "@/types/order";
 
 // Define filter status options for Pickup Scheduler (KitFix Picks Up)
 const kitFixPickupStatuses: RepairStatus[] = [
     "Routed for Pickup (KitFix)", // Initial status from OrdersTable
     "Scheduled for Pickup (KitFix)", // Optional scheduling step
-    "Item Picked Up (KitFix)", // After KitFix picks up
-    "Ready for Repair (from Pickup)", // After KitFix picks up, sent to RepairManager
+    "Item Picked Up (KitFix)" as RepairStatus, // After KitFix picks up
+    "Ready for Repair (from Pickup)" as RepairStatus, // After KitFix picks up, sent to RepairManager
 ];
 const relevantStatuses: RepairStatus[] = [...kitFixPickupStatuses];
 type PickupFilterStatus = RepairStatus | 'all';
@@ -219,7 +215,7 @@ const PickupScheduler: React.FC = () => {
             toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not ready to be marked as picked up by KitFix.`);
             return;
         }
-        if (order.processing.repairStatus === 'Item Picked Up (KitFix)') {
+        if (order.processing.repairStatus === 'Item Picked Up (KitFix)' as RepairStatus) {
             toast.info(`Order ${order.id.slice(0, 6).toUpperCase()} is already marked as picked up by KitFix.`);
             return;
         }
@@ -257,7 +253,7 @@ const PickupScheduler: React.FC = () => {
             toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not marked as picked up by KitFix.`);
             return;
         }
-        if (order.processing.repairStatus === 'Ready for Repair (from Pickup)') {
+        if (order.processing.repairStatus === "Ready for Repair (from Pickup)" as RepairStatus) {
             toast.info(`Order ${order.id.slice(0, 6).toUpperCase()} is already marked ready for repair.`);
             return;
         }
@@ -466,7 +462,7 @@ const PickupScheduler: React.FC = () => {
                                         )}
 
                                         {/* Button to mark as Picked Up by KitFix */}
-                                        {(repairStatus === 'Routed for Pickup (KitFix)' || repairStatus === 'Scheduled for Pickup (KitFix)') && (
+                                        {(repairStatus === "Routed for Pickup (KitFix)" || repairStatus === "Scheduled for Pickup (KitFix)" as RepairStatus) && (
                                             <Button
                                                 size="sm"
                                                 variant="default" // Use default for the final action before routing to repair

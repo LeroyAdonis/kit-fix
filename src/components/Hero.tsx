@@ -1,4 +1,3 @@
-import React from 'react';
 import { ArrowRight } from 'lucide-react';
 import heroImage from '../assets/hero.jpeg';
 

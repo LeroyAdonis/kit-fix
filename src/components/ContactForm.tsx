@@ -1,4 +1,3 @@
-import React from 'react';
 import ContactFormSection from './ContactFormSection';
 import ContactInfo from './ContactInfo';
 import BusinessHours from './BusinessHours';

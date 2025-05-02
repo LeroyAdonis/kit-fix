@@ -1,4 +1,4 @@
-import React from "react";
+
 import { ArrowLeft } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { useEffect } from "react";
@@ -19,15 +19,15 @@ const NotFound = () => {
         <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-fiery-red/10 text-fiery-red mb-6">
           <span className="text-3xl font-bold">404</span>
         </div>
-        
+
         <h1 className="heading-lg mb-4 text-jet-black">Page Not Found</h1>
-        
+
         <p className="text-gray-700 mb-8">
           The page you are looking for might have been removed, had its name changed, or is temporarily unavailable.
         </p>
-        
-        <a 
-          href="/" 
+
+        <a
+          href="/"
           className="btn-primary inline-flex items-center justify-center"
         >
           <ArrowLeft className="mr-2 h-4 w-4" />

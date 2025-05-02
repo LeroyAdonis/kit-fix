@@ -1,6 +1,8 @@
+/* eslint-disable react-refresh/only-export-components */
+/* eslint-disable react-hooks/exhaustive-deps */
 // src/contexts/AuthContext.tsx
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { auth } from "@/firebaseConfig";
 import { logoutUser } from "@/services/authService";
@@ -11,7 +13,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
-import { se } from "date-fns/locale";
+
 import { useLocation } from "react-router-dom";
 
 interface AuthContextType {

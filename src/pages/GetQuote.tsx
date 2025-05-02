@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from 'sonner';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
-import { getFirestore, doc, updateDoc, getDoc, collection, query, where, getDocs, serverTimestamp } from 'firebase/firestore'; // Import serverTimestamp
+import { doc, updateDoc, getDoc, serverTimestamp } from 'firebase/firestore'; // Import serverTimestamp
 import { getAuth } from "firebase/auth";
 // import { set } from 'date-fns'; // No longer needed?
 import { useAuthState } from 'react-firebase-hooks/auth';
@@ -61,7 +61,7 @@ const repairOptions: RepairOption[] = [
 const GetQuote = () => {
     const [user] = useAuthState(auth);
     const [searchParams] = useSearchParams();
-    const [userData, setUserData] = useState<any>(null); // Consider typing userData
+    // Removed unused userData state
     const [isLoading, setIsLoading] = React.useState(false); // Local loading state for form submission
     const [pageLoading, setPageLoading] = useState(true); // Loading state for initial data fetch
     const location = useLocation();
@@ -132,14 +132,7 @@ const GetQuote = () => {
                         return; // Stop further execution
                     }
 
-                    // Fetch user data if logged in
-                    if (user) {
-                        const userDocRef = doc(db, 'users', user.uid);
-                        const userDocSnap = await getDoc(userDocRef);
-                        if (userDocSnap.exists()) {
-                            setUserData(userDocSnap.data());
-                        }
-                    }
+                    // Removed unused user data fetching logic
 
 
                 } else {

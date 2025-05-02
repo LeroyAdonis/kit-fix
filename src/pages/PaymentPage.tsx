@@ -1,4 +1,6 @@
-import { setDoc, collection, updateDoc, doc, Timestamp, serverTimestamp, getDoc } from 'firebase/firestore';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable react-hooks/exhaustive-deps */
+import { updateDoc, doc, Timestamp, serverTimestamp, getDoc } from 'firebase/firestore';
 import { auth, db } from '@/firebaseConfig';
 import { toast } from 'sonner'; // Use sonner
 
@@ -7,7 +9,7 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 
 // Import types - Ensure all types are imported
-import { Order, OrderStatus, PaymentStatus, RepairStatus, InitialMethod, FulfillmentMethod, ProcessingInfo, ContactInfo } from '@/types/order';
+import { Order, PaymentStatus } from '@/types/order';
 import Footer from '@/components/Footer';
 import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';

@@ -1,8 +1,9 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 // src/pages/Dashboard.tsx
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthState } from 'react-firebase-hooks/auth';
-import { doc, getDoc, collection, query, where, getDocs, deleteDoc, Timestamp, orderBy } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, deleteDoc, orderBy, Timestamp } from 'firebase/firestore';
 import { auth, db } from '@/firebaseConfig';
 import { logoutUser } from '@/services/authService'; // Assuming this exists
 import { Button } from '@/components/ui/button';
@@ -25,13 +26,9 @@ import {
     DialogDescription,
 } from '@/components/ui/dialog';
 import {
-    BadgeCheck,
-    Clock,
     Shirt,
     CalendarDays,
     Truck,
-    CreditCard,
-    Info,
     History,
     User, // Added icons
     Mail,
@@ -42,11 +39,10 @@ import {
     MapPin,
     Loader2 // Loading spinner for buttons
 } from 'lucide-react';
-import OrderImageCarousel from '@/components/OrderImageCarousel'; // Assuming this component works with string[]
 import ProgressStepper from '@/components/ProgressStepper'; // Assuming this component can take steps array and current step index
 
 // Import types
-import { Order, OrderStatus, RepairStatus, DeliveryMethod, PaymentStatus } from '@/types/order';
+import { Order } from '@/types/order';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 
@@ -66,7 +62,7 @@ const getProcessingSteps = (order: Order): { steps: string[], currentStep: numbe
         return { steps: ['Order Placed', 'Processing', 'Completed'], currentStep: 0 };
     }
 
-    const { deliveryMethod, repairStatus } = order.processing;
+    const { deliveryMethod = 'unknown', repairStatus } = order.processing as { deliveryMethod?: string; repairStatus: string };
 
     const steps: string[] = [];
     let currentStep = 0;
@@ -375,7 +371,9 @@ const Dashboard = () => {
                                 {orders.map((order) => {
                                     const paid = order.payment?.status === 'paid';
                                     const deliveryType = order.processing?.deliveryMethod;
-                                    const formattedDate = order.createdAt?.seconds ? format(new Date(order.createdAt.seconds * 1000), 'dd MMM yyyy') : 'N/A';
+                                    const formattedDate = order.createdAt && typeof order.createdAt === "object" && "seconds" in order.createdAt
+                                        ? format(new Date((order.createdAt as Timestamp).seconds * 1000), "dd MMM yyyy HH:mm")
+                                        : "N/A";
                                     const repairDescription = order.repairDescription || order.repairType || 'Repair Service';
 
                                     let statusBadge: React.ReactNode;

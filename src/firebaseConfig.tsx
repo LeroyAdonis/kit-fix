@@ -5,7 +5,17 @@ import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 // Your Firebase project config (from Firebase Console)
-const firebaseConfig = {
+interface FirebaseConfig {
+    apiKey: string;
+    authDomain: string;
+    projectId: string;
+    storageBucket: string;
+    messagingSenderId: string;
+    appId: string;
+    measurementId?: string;
+}
+
+export const firebaseConfig: FirebaseConfig = {
     apiKey: "AIzaSyC2HHEokZNkXW7Ca_b1cfCX_H30rkN1tus",
     authDomain: "kitfix-63a88.firebaseapp.com",
     projectId: "kitfix-63a88",

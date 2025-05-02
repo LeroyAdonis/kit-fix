@@ -1,4 +1,3 @@
-import React from 'react';
 import { Camera, MessageSquare, Calendar, CheckCircle } from 'lucide-react';
 
 const steps = [
@@ -35,11 +34,11 @@ const HowItWorks = () => {
         <h2 className="heading-lg text-center mb-12">
           How It Works
         </h2>
-        
+
         <div className="grid md:grid-cols-4 gap-8">
           {steps.map((step, index) => (
-            <div 
-              key={index} 
+            <div
+              key={index}
               className="flex flex-col items-center text-center"
             >
               <div className={`${step.color} p-4 rounded-full inline-flex items-center justify-center mb-4`}>

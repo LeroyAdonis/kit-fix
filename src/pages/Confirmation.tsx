@@ -1,7 +1,7 @@
 // src/pages/Confirmation.tsx
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebaseConfig';
 import { Button } from '@/components/ui/button';
 import { CheckCircle, Package, Truck, CreditCard, CalendarDays, MapPin, Tag, DollarSign, Hash, User, Mail, Phone } from 'lucide-react'; // Added more icons
@@ -106,9 +106,10 @@ const Confirmation = () => {
     const formattedAmount = amount !== undefined ? `R${amount.toFixed(2)}` : 'N/A';
     const preferredDate = order.processing?.preferredDate || 'N/A';
     const deliveryAddress = order.contactInfo?.address || 'N/A'; // Address is in contactInfo now
-    const orderCreationDate = order.createdAt?.seconds
-        ? format(new Date(order.createdAt.seconds * 1000), "dd MMM yyyy HH:mm")
-        : 'N/A';
+    const orderCreationDate =
+        order.createdAt && typeof order.createdAt === "object" && "seconds" in order.createdAt
+            ? format(new Date((order.createdAt as Timestamp).seconds * 1000), "dd MMM yyyy HH:mm")
+            : 'N/A';
 
     // Determine the location/address to display based on method
     let locationLabel = 'Address/Location';

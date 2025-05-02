@@ -1,12 +1,26 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getAuth } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/firebaseConfig';
 
+type FormValues = {
+    name: string;
+    email: string;
+    phone: string;
+    address: string;
+    suburb: string;
+    city: string;
+    province: string;
+    postalCode: string;
+    deliveryMethod: string;
+    [key: string]: any; // Add this if there are additional dynamic fields
+};
+
 const STORAGE_KEY = "kitfix-schedule-service";
 
-export const usePrefillForm = (form: any, previousStepData: any) => {
+export const usePrefillForm = (form: any) => {
     const navigate = useNavigate();
     const [isLoading, setIsLoading] = useState(true); // Adding loading state
 

@@ -17,9 +17,9 @@ export const scheduleServiceSchema = z.object({
       const date = new Date(val);
       return date.toDateString() === val
         ? val
-        : z.string().invalid("custom_error", {
-            message: "Invalid date format. Should be dd MMM yyyy"
-          });
+        : (() => {
+            throw new Error("Invalid date format. Should be dd MMM yyyy");
+          })();
     })
     .transform((val) => new Date(val)),
   deliveryDate: z

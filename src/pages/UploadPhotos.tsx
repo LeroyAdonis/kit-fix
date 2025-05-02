@@ -18,14 +18,13 @@ import { auth } from "@/firebaseConfig";
 // import { useOrderContext } from "@/contexts/OrderContext"; // Remove if not used
 
 // Import Order type and relevant statuses
-import { Order, OrderStatus, RepairStatus, PaymentStatus, InitialMethod, FulfillmentMethod } from '@/types/order';
+import { Order, OrderStatus, RepairStatus, PaymentStatus, ProcessingInfo } from '@/types/order';
 import { initializeApp } from "firebase/app";
 
 const app = initializeApp(firebaseConfig);
 const storage = getStorage(app);
 const db = getFirestore(app); // Use db from firebaseConfig directly if exported
 
-type DeliveryMethod = 'pickup' | 'dropoff' | 'delivery';
 /**
  * Page for uploading photos of a jersey for repair.
  *
@@ -224,33 +223,7 @@ const UploadPhotos = () => {
                 processing: { // Initialize processing fields
                     status: "pending" as OrderStatus, // <-- Initial status for OrdersTable
                     repairStatus: "Pending Routing" as RepairStatus, // <-- Initial status before admin routes
-
-                    deliveryMethod: "" as DeliveryMethod, // Will be set in ScheduleService
-                    duration: "", // Will be set in GetQuote
-                    preferredDate: "", // Will be set in ScheduleService
-
-                    // Do NOT initialize method-specific statuses here.
-                    // They should be set in ScheduleService based on the chosen method.
-                    pickupStatus: "",
-                    dropoffStatus: "",
-                    deliveryStatus: "",
-
-                    actualPickupDate: Timestamp.fromDate(new Date()),
-                    actualDeliveryDate: Timestamp.fromDate(new Date()),
-                    scheduledPickupDate: Timestamp.fromDate(new Date()),
-                    scheduledDeliveryDate: Timestamp.fromDate(new Date()),
-                    dropoffLocation: "",
-                    pickupLocation: "",
-                    deliveryAddress: "",
-
-                    actualDropoffDate: Timestamp.fromDate(new Date()),
-                    scheduledDropoffDate: Timestamp.fromDate(new Date()),
-                    initialMethod: "" as InitialMethod,
-                    fulfillmentMethod: "" as FulfillmentMethod,
-                    assignedTo: "",
-                    repairStartTime: Timestamp.fromDate(new Date()),
-                    repairCompletionTime: Timestamp.fromDate(new Date()),
-                },
+                } as ProcessingInfo,
 
                 payment: { // Initialize payment fields
                     amount: 0, // Set price in GetQuote

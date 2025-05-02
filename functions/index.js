@@ -1,42 +1,29 @@
-// functions/index.js
-// Import necessary modules using CommonJS require syntax
-const functions = require("firebase-functions"); // Import functions to access config
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 const { onDocumentUpdated } = require("firebase-functions/v2/firestore");
-const logger = require("firebase-functions/logger"); // Use require for logger
-const nodemailer = require("nodemailer"); // Use require for nodemailer
+const logger = require("firebase-functions/logger");
+const nodemailer = require("nodemailer");
 
 // Initialize Firebase Admin SDK
 initializeApp();
 
-// Use Firestore emulator if running locally
-// if (process.env.FIRESTORE_EMULATOR_HOST) {
-//   const firestore = getFirestore();
-//   firestore.settings({
-//     host: process.env.FIRESTORE_EMULATOR_HOST,
-//     ssl: false
-//   });
-// }
-
 // --- Nodemailer Configuration ---
-// Configure the email transport using the Nodemailer library.
-// Sensitive information like Brevo user/pass should be stored in Functions config.
-// Run: firebase functions:config:set brevo.user="your_brevo_user" brevo.pass="your_brevo_smtp_key" email.from="your_sending_email@example.com"
 let transporter;
 let senderEmail;
+
 try {
-  const brevoUser = functions.config().brevo?.user;
-  const brevoPass = functions.config().brevo?.pass;
-  senderEmail = functions.config().email?.from; // Load sender email from config
+  // Use environment variables instead of functions.config()
+  const brevoUser = process.env.BREVO_USER;
+  const brevoPass = process.env.BREVO_PASS;
+  senderEmail = process.env.EMAIL_FROM; // Fix: Remove 'const'
 
   if (!brevoUser || !brevoPass) {
     logger.error(
-      "Brevo user or password not found in Firebase Functions config. Set using 'firebase functions:config:set brevo.user=... brevo.pass=...'"
+      "Brevo user or password not found in environment variables. Set BREVO_USER and BREVO_PASS."
     );
   } else if (!senderEmail) {
     logger.error(
-      "Sender email not found in Firebase Functions config. Set using 'firebase functions:config:set email.from=...'"
+      "Sender email not found in environment variables. Set EMAIL_FROM."
     );
   } else {
     transporter = nodemailer.createTransport({
@@ -51,11 +38,7 @@ try {
     logger.info("Nodemailer transporter configured successfully for Brevo.");
   }
 } catch (error) {
-  logger.error(
-    "Error accessing Firebase Functions config or configuring Nodemailer:",
-    error
-  );
-  // Consider if the function should fail deployment if email config is missing
+  logger.error("Error configuring Nodemailer transporter:", error);
 }
 
 // --- sendOrderStatusEmail ---
@@ -139,15 +122,19 @@ exports.sendOrderStatusEmail = onDocumentUpdated(
 
     // Optional: Add more triggers here for other key status changes if needed
     // Example: When status changes to 'fulfilled' (Delivered/Picked Up)
-    // if (statusBefore !== 'fulfilled' && statusAfter === 'fulfilled') {
-    //      logger.info(`Order ${orderId} status changed to fulfilled. Sending completion email.`);
-    //      await sendOrderFulfilledEmail(afterData, orderId);
-    // }
-    // Example: When status changes to 'cancelled'
-    // if (statusBefore !== 'cancelled' && statusAfter === 'cancelled') {
-    //      logger.info(`Order ${orderId} status changed to cancelled. Sending cancellation email.`);
-    //      await sendOrderCancelledEmail(afterData, orderId);
-    // }
+    if (statusBefore !== "fulfilled" && statusAfter === "fulfilled") {
+      logger.info(
+        `Order ${orderId} status changed to fulfilled. Sending completion email.`
+      );
+      await sendOrderFulfilledEmail(afterData, orderId);
+    }
+    //Example: When status changes to 'cancelled'
+    if (statusBefore !== "cancelled" && statusAfter === "cancelled") {
+      logger.info(
+        `Order ${orderId} status changed to cancelled. Sending cancellation email.`
+      );
+      await sendOrderCancelledEmail(afterData, orderId);
+    }
 
     logger.info(
       `Order ${orderId} update processed. No further relevant status changes detected for email triggers.`
@@ -251,7 +238,7 @@ async function sendConfirmationEmail(orderData, orderId) {
                    orderData.processing?.preferredDate || "N/A"
                  }</li>
              </ul>
-             <p>We will begin processing your order shortly. You can track the progress in your <a href="YOUR_CUSTOMER_DASHBOARD_URL">dashboard</a>.</p> {/* Replace YOUR_CUSTOMER_DASHBOARD_URL */}
+             <p>We will begin processing your order shortly. You can track the progress in your <a href="https://kitfix.co.za/dashboard">dashboard</a>.</p>
              <p>Thank you for choosing KitFix!</p>
              <p>KitFix Team</p>
          ` // Ensure placeholder URL is replaced or removed
@@ -302,7 +289,7 @@ async function sendInRepairEmail(orderData, orderId) {
               .toUpperCase()}</strong> is now in the repair process.</p>
             <p>We're carefully restoring your item!</p>
             <p>We will notify you once the repair is completed and ready for the next step.</p>
-            <p>You can check the latest status in your <a href="YOUR_CUSTOMER_DASHBOARD_URL">dashboard</a>.</p> {/* Replace YOUR_CUSTOMER_DASHBOARD_URL */}
+            <p>You can check the latest status in your <a href="https://kitfix.co.za/dashboard">dashboard</a>.</p>
             <p>KitFix Team</p>
         ` // Ensure placeholder URL is replaced or removed
   };
@@ -388,7 +375,7 @@ async function sendReadyForFulfillmentEmail(
                     : "We will be in touch shortly regarding the final arrangements."
                 }
             </p>
-            <p>You can check the latest status in your <a href="YOUR_CUSTOMER_DASHBOARD_URL">dashboard</a>.</p> {/* Replace YOUR_CUSTOMER_DASHBOARD_URL */}
+            <p>You can check the latest status in your <a href="https://kitfix.co.za/dashboard">dashboard</a>.</p>
             <p>Thank you for choosing KitFix!</p>
             <p>KitFix Team</p>
         ` // Ensure placeholder URL is replaced or removed
@@ -397,47 +384,101 @@ async function sendReadyForFulfillmentEmail(
   await safeSendEmail(mailOptions, orderId, '"Ready for Fulfillment"');
 }
 
-// Optional: Add email for 'fulfilled' status (Delivered/Picked Up)
-// async function sendOrderFulfilledEmail(orderData, orderId) {
-//     const customerEmail = orderData.contactInfo?.email;
-//     const adminEmail = 'admin@kitfix.co.za'; // Your admin email
-//     const fulfillmentMethod = orderData.processing?.fulfillmentMethod;
-//
-//     if (!customerEmail && !adminEmail) {
-//          logger.warn(`No recipients for order ${orderId}. Skipping fulfillment completion email.`);
-//          return;
-//     }
-//
-//     // Ensure senderEmail is defined
-//     if (!senderEmail) return;
-//
-//     const recipients = [customerEmail, adminEmail].filter(Boolean); // Filter out null/undefined
-//
-//     const fulfillmentDetail = fulfillmentMethod === 'pickup'
-//         ? `picked up.`
-//         : fulfillmentMethod === 'delivery'
-//             ? `delivered.`
-//             : `fulfilled.`; // Fallback
-//
-//     const mailOptions = {
-//         from: `"KitFix" <${senderEmail}>`,
-//         to: recipients.join(','), // Comma-separated list of recipients
-//         subject: `KitFix Order #${orderId.slice(0, 6).toUpperCase()} Fulfilled!`,
-//         text: `
-//             Hello ${orderData.contactInfo?.name || 'Customer'},
-//             Your order #${orderId.slice(0, 6).toUpperCase()} has been successfully ${fulfillmentDetail}
-//             Thank you for your business!
-//             KitFix Team
-//         `,
-//         html: `
-//             <p>Hello ${orderData.contactInfo?.name || 'Customer'},</p>
-//             <p>Your order <strong>#${orderId.slice(0, 6).toUpperCase()}</strong> has been successfully ${fulfillmentDetail}</p>
-//             <p>Thank you for your business!</p>
-//             <p>KitFix Team</p>
-//         `,
-//     };
-//
-//     await safeSendEmail(mailOptions, orderId, '"Fulfilled"');
-// }
+//Optional: Add email for 'fulfilled' status (Delivered/Picked Up)
+async function sendOrderFulfilledEmail(orderData, orderId) {
+  const customerEmail = orderData.contactInfo?.email;
+  const adminEmail = "admin@kitfix.co.za"; // Your admin email
+  const fulfillmentMethod = orderData.processing?.fulfillmentMethod;
+
+  if (!customerEmail && !adminEmail) {
+    logger.warn(
+      `No recipients for order ${orderId}. Skipping fulfillment completion email.`
+    );
+    return;
+  }
+
+  // Ensure senderEmail is defined
+  if (!senderEmail) return;
+
+  const recipients = [customerEmail, adminEmail].filter(Boolean); // Filter out null/undefined
+
+  const fulfillmentDetail =
+    fulfillmentMethod === "pickup"
+      ? `picked up.`
+      : fulfillmentMethod === "delivery"
+      ? `delivered.`
+      : `fulfilled.`; // Fallback
+
+  const mailOptions = {
+    from: `"KitFix" <${senderEmail}>`,
+    to: recipients.join(","), // Comma-separated list of recipients
+    subject: `KitFix Order #${orderId.slice(0, 6).toUpperCase()} Fulfilled!`,
+    text: `
+            Hello ${orderData.contactInfo?.name || "Customer"},
+            Your order #${orderId
+              .slice(0, 6)
+              .toUpperCase()} has been successfully ${fulfillmentDetail}
+            Thank you for your business!
+            KitFix Team
+        `,
+    html: `
+            <p>Hello ${orderData.contactInfo?.name || "Customer"},</p>
+            <p>Your order <strong>#${orderId
+              .slice(0, 6)
+              .toUpperCase()}</strong> has been successfully ${fulfillmentDetail}</p>
+            <p>Thank you for your business!</p>
+            <p>KitFix Team</p>
+        `
+  };
+
+  await safeSendEmail(mailOptions, orderId, '"Fulfilled"');
+}
 
 // You can uncomment and deploy the optional fulfilled email trigger if needed.
+
+async function sendOrderCancelledEmail(orderData, orderId) {
+  const customerEmail = orderData.contactInfo?.email;
+  const adminEmail = "admin@kitfix.co.za"; // Your admin email recipient
+
+  if (!customerEmail && !adminEmail) {
+    logger.warn(
+      `No recipients for order ${orderId}. Skipping cancellation email.`
+    );
+    return;
+  }
+
+  const recipients = [customerEmail, adminEmail].filter(Boolean); // Filter out null/undefined
+
+  // Ensure senderEmail is defined
+  if (!senderEmail) return;
+
+  const mailOptions = {
+    from: `"KitFix" <${senderEmail}>`,
+    to: recipients.join(","),
+    subject: `KitFix Order #${orderId.slice(0, 6).toUpperCase()} Cancelled`,
+    text: `
+            Hello ${orderData.contactInfo?.name || "Customer"},
+
+            We regret to inform you that your order #${orderId
+              .slice(0, 6)
+              .toUpperCase()} has been cancelled.
+
+            If this was a mistake or you have any questions, please contact us at support@kitfix.co.za.
+
+            Thank you for choosing KitFix.
+
+            KitFix Team
+        `,
+    html: `
+            <p>Hello ${orderData.contactInfo?.name || "Customer"},</p>
+            <p>We regret to inform you that your order <strong>#${orderId
+              .slice(0, 6)
+              .toUpperCase()}</strong> has been cancelled.</p>
+            <p>If this was a mistake or you have any questions, please contact us at <a href="mailto:support@kitfix.co.za">support@kitfix.co.za</a>.</p>
+            <p>Thank you for choosing KitFix.</p>
+            <p>KitFix Team</p>
+        `
+  };
+
+  await safeSendEmail(mailOptions, orderId, "Cancellation");
+}

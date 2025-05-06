@@ -135,6 +135,20 @@ const Header = () => {
                   {item.name}
                 </a>
               ))}
+              {user ? (
+                <>
+                  <Link to="/dashboard" className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive('/dashboard') ? 'text-electric-blue font-semibold' : 'text-jet-black'}`}>
+                    Dashboard
+                  </Link>
+                  <Link to="/" onClick={logout} className="font-medium text-jet-black hover:text-electric-blue transition-colors duration-300">
+                    Logout
+                  </Link>
+                </>
+              ) : (
+                <Link to="/login" className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive('/login') ? 'text-electric-blue font-semibold' : 'text-jet-black'}`}>
+                  Login
+                </Link>
+              )}
               <button type="button" onClick={() => navigate('/login')} className="bg-electric-blue text-white px-4 py-2 rounded-md font-medium w-full">
                 Start Repair
               </button>

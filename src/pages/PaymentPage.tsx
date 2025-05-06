@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable react-hooks/exhaustive-deps */
-import { updateDoc, doc, Timestamp, serverTimestamp, getDoc } from 'firebase/firestore';
+import { updateDoc, doc, Timestamp, serverTimestamp, getDoc, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '@/firebaseConfig';
 import { toast } from 'sonner'; // Use sonner
 
@@ -35,6 +35,8 @@ const PaymentPage = () => {
     const [finalOrderData, setFinalOrderData] = useState<Order | null>(null);
     const [finalOrderId, setFinalOrderId] = useState<string | null>(null);
     const [pageLoading, setPageLoading] = useState(true); // Loading for initial data fetch
+    const [, setIsCancellingId] = useState<string | null>(null);
+    const [orders, setOrders] = useState<Order[]>([]);
 
 
     // Effect to fetch and consolidate order data for display
@@ -98,6 +100,65 @@ const PaymentPage = () => {
         // Add dependencies: searchParams, navigate
         // Depend on db as well, though unlikely to change
     }, [searchParams, navigate, db]);
+
+    const cancelOrder = async (orderId: string | null) => {
+        const orderIdFromParams = searchParams.get("orderId");
+        if (!finalOrderData) {
+            toast.error("Order not found.");
+            return;
+        }
+
+        // Allow cancelling if status is pending
+        const canCancel = finalOrderData.processing?.status === 'pending';
+        if (!canCancel) {
+            if (orderIdFromParams) {
+                toast.warning(`Cannot cancel order ${orderIdFromParams.slice(0, 6).toUpperCase()}. It is already being processed.`);
+            } else {
+                toast.warning("Cannot cancel order. Order ID is missing.");
+            }
+            return;
+        }
+
+        if (window.confirm('Are you sure you want to cancel this order? This action cannot be undone.')) {
+            setIsCancellingId(orderIdFromParams);
+            try {
+                // Option 1: Update status to 'cancelled' (Recommended for history)
+                // Need serverTimestamp() from Firestore for this
+                // import { serverTimestamp } from 'firebase/firestore';
+                // await updateDoc(doc(db, 'orders', orderId), {
+                //     'processing.status': 'cancelled' as OrderStatus,
+                //     updatedAt: serverTimestamp() // Use server timestamp
+                // });
+                // // Optimistically update state
+                // setOrders(orders.map(o => o.id === orderId ?
+                //     { ...o, processing: { ...(o.processing as ProcessingInfo), status: 'cancelled' as OrderStatus }, updatedAt: new Date() } // Client date for immediate display
+                //     : o
+                // ));
+
+                // Option 2: Delete the document (Your current implementation)
+                if (orderId) {
+                    await deleteDoc(doc(db, 'orders', orderId));
+                } else {
+                    console.error("Order ID is null. Cannot delete the document.");
+                    toast.error("Failed to cancel the order. Order ID is missing.");
+                }
+                setOrders(orders.filter(order => order.id !== orderId));
+
+
+                if (orderId) {
+                    toast.success(`Order ${orderId.slice(0, 6).toUpperCase()} cancelled successfully!`);
+                    navigate("/dashboard");
+                } else {
+                    toast.error("Order ID is missing. Cannot display cancellation message.");
+                }
+            } catch (error) {
+                console.error("Error cancelling order:", error);
+                toast.error("Error cancelling order. Try again later.");
+            } finally {
+                setIsCancellingId(null);
+            }
+        }
+    };
 
 
     // Function called by Paystack on successful payment
@@ -423,9 +484,20 @@ const PaymentPage = () => {
                             </Button>
 
                             {/* Add a Back button */}
-                            <Button className="w-full" variant="outline" onClick={() => navigate(`/schedule-service?orderId=${finalOrderId}`)} disabled={isLoading || pageLoading}>
+                            <Button
+                                className="w-full"
+                                variant="outline"
+                                onClick={() => navigate(`/schedule-service?orderId=${finalOrderId}`, { state: { fromPayment: true } })}
+                                disabled={isLoading || pageLoading}
+                            >
                                 Back to Schedule
                             </Button>
+                            {/* Add a Cancel button */}
+                            {finalOrderData?.processing?.status === 'pending' && (
+                                <Button className="w-full" variant="outline" onClick={() => cancelOrder(finalOrderId!)} disabled={isLoading || pageLoading}>
+                                    Cancel
+                                </Button>
+                            )}
                         </CardContent>
                     </Card>
                 </div>

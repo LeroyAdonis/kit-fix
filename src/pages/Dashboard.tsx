@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable react-hooks/exhaustive-deps */
 // src/pages/Dashboard.tsx
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -30,20 +30,19 @@ import {
     CalendarDays,
     Truck,
     History,
-    User, // Added icons
+    User,
     Mail,
     Phone,
     Tag,
     Package,
     DollarSign,
     MapPin,
-    Loader2 // Loading spinner for buttons
+    Loader2
 } from 'lucide-react';
-import ProgressStepper from '@/components/ProgressStepper'; // Assuming this component can take steps array and current step index
+import ProgressStepper from '@/components/ProgressStepper'; // Assuming this component exists and is updated
 
-// Import types
-import { Order } from '@/types/order';
-import { Separator } from '@/components/ui/separator';
+// Import types from your order.ts
+import { Order, ProcessingInfo } from '@/types/order';
 import { Badge } from '@/components/ui/badge';
 
 // Define a UserData interface based on what you save in 'users' collection
@@ -55,130 +54,315 @@ interface UserData {
 
 
 // Helper function to map internal status to customer-friendly steps and current index
-const getProcessingSteps = (order: Order): { steps: string[], currentStep: number } => { // Expect Order, not Order | null here
-    if (!order || !order.processing) { // Added null check for safety, although type hint suggests order should exist
-        // This fallback case is less ideal, should ensure order.processing exists before calling
-        console.warn("getProcessingSteps called with incomplete order:", order);
-        return { steps: ['Order Placed', 'Processing', 'Completed'], currentStep: 0 };
+const getProcessingSteps = (order: Order): { steps: string[], currentStep: number } => {
+    // Safely access nested properties
+    const processing = order?.processing || {} as ProcessingInfo; // Cast to ensure type structure
+    const {
+        deliveryMethod, // Could be ambiguous based on type def
+        initialMethod, // How it gets TO KitFix ('pickup', 'dropoff')
+        fulfillmentMethod, // How it gets BACK to customer ('pickup', 'delivery')
+        repairStatus,
+        status, // Overall OrderStatus like "pending", "fulfilled", "cancelled"
+        actualCustomerPickupDate,
+        actualKitFixDeliveryDate,
+    } = processing;
+
+
+    let steps: string[];
+    let flowIdentifier: string | null = null; // For debugging logs
+
+
+    // 1. Determine the correct Customer-Friendly Steps array based on the order's methods
+    // Use a more explicit method determination based on initial/fulfillment methods
+    if (initialMethod === 'dropoff' && fulfillmentMethod === 'pickup') {
+        // Customer drops off, Customer picks up from KitFix
+        steps = ['Order Placed', 'Awaiting Dropoff', 'Item Dropped Off', 'In Repair', 'Ready for Pickup', 'Picked Up'];
+        flowIdentifier = 'dropoff_pickup';
+    } else if (initialMethod === 'pickup' && fulfillmentMethod === 'delivery') {
+        // KitFix picks up, KitFix delivers back
+        steps = ['Order Placed', 'KitFix Picking Up', 'Item Picked Up', 'In Repair', 'Ready for Delivery', 'Delivered'];
+        flowIdentifier = 'pickup_delivery';
+    } else if (initialMethod === ('delivery' as string) && fulfillmentMethod === 'delivery') {
+        // Customer mails in, KitFix delivers back
+        steps = ['Order Placed', 'Item Sent to KitFix', 'Item Received at KitFix', 'In Repair', 'Ready for Delivery', 'Out for Delivery', 'Delivered'];
+        flowIdentifier = 'delivery_delivery';
+    }
+    // Fallback if initial/fulfillment methods don't match a standard combination
+    // or if they are missing. Use the ambiguous 'deliveryMethod' if it exists and matches known types.
+    // NOTE: This fallback might still cause issues if deliveryMethod is set but doesn't match the actual flow
+    // derived from initial/fulfillment methods. The ideal solution is ensuring initial/fulfillment/deliveryMethod
+    // are set correctly and consistently when the order is created/updated.
+    else if (deliveryMethod === 'dropoff') { // Fallback to using deliveryMethod if initial/fulfillment isn't standard
+        steps = ['Order Placed', 'Awaiting Dropoff', 'Item Dropped Off', 'In Repair', 'Ready for Pickup', 'Picked Up'];
+        flowIdentifier = 'fallback_deliveryMethod_dropoff';
+        console.warn(`Order ${order?.id}: Using deliveryMethod 'dropoff' steps as fallback.`);
+    } else if (deliveryMethod === 'pickup') { // Fallback
+        steps = ['Order Placed', 'KitFix Picking Up', 'Item Picked Up', 'In Repair', 'Ready for Delivery', 'Delivered'];
+        flowIdentifier = 'fallback_deliveryMethod_pickup';
+        console.warn(`Order ${order?.id}: Using deliveryMethod 'pickup' steps as fallback.`);
+    } else if (deliveryMethod === 'delivery') { // Fallback
+        steps = ['Order Placed', 'Item Sent to KitFix', 'Item Received at KitFix', 'In Repair', 'Ready for Delivery', 'Out for Delivery', 'Delivered'];
+        flowIdentifier = 'fallback_deliveryMethod_delivery';
+        console.warn(`Order ${order?.id}: Using deliveryMethod 'delivery' steps as fallback.`);
+    }
+    // Final fallback to the simplest sequence if no specific method combination or deliveryMethod matches
+    else {
+        steps = ['Order Placed', 'Item Received', 'In Repair', 'Completed'];
+        flowIdentifier = 'default_fallback';
+        console.warn(`Order ${order?.id}: Using default steps due to missing or unhandled initial/fulfillment/delivery methods (initial: ${initialMethod}, fulfillment: ${fulfillmentMethod}, delivery: ${deliveryMethod}).`);
     }
 
-    const { deliveryMethod = 'unknown', repairStatus } = order.processing as { deliveryMethod?: string; repairStatus: string };
+    // console.log(`Order ${order?.id}: Step flow determined via: ${flowIdentifier}`); // Optional debug log
 
-    const steps: string[] = [];
-    let currentStep = 0;
+    // Ensure steps array is valid before proceeding
+    if (!Array.isArray(steps) || steps.length === 0) {
+        console.error("Could not determine valid steps for order:", order?.id, "with processing:", processing);
+        return { steps: ['Error Loading Progress'], currentStep: 0 }; // Graceful failure
+    }
 
-    // Base steps applicable to all orders
-    steps.push('Order Placed'); // Status: pending, RepairStatus: Pending Routing
+    const lastStepIndex = steps.length - 1;
+    let currentStepIndex = 0; // Default to 'Order Placed' (index 0)
+    let potentialStepLabel: string | null = null; // Use label first, then find index
 
-    if (deliveryMethod === 'dropoff') {
-        steps.push('Awaiting Dropoff'); // RepairStatus: Routed to Dropoff, DropoffStatus: awaiting_dropoff
-        steps.push('Item Dropped Off'); // DropoffStatus: dropped_off, RepairStatus: Ready for Repair (from Dropoff)
-        steps.push('In Repair');      // RepairStatus: Assigned, In Repair
-        steps.push('Ready for Pickup'); // RepairStatus: Repair Completed, Ready for Pickup
-        steps.push('Picked Up');      // ActualPickupDate set, or PickupStatus: picked
-    } else if (deliveryMethod === 'pickup') {
-        steps.push('Awaiting Pickup'); // RepairStatus: Sent to Repair Manager, PickupStatus: awaiting_pickup
-        steps.push('Item Picked Up'); // ActualPickupDate set, or PickupStatus: picked
-        steps.push('In Repair');      // RepairStatus: Assigned, In Repair
-        steps.push('Ready for Delivery'); // RepairStatus: Repair Completed, Ready for Delivery
-        steps.push('Delivered');      // ActualDeliveryDate set, or DeliveryStatus: delivered
-    } else if (deliveryMethod === 'delivery') {
-        steps.push('Awaiting Delivery'); // RepairStatus: Sent to Repair Manager, DeliveryStatus: awaiting_delivery
-        // Option: Add a step for item received at KitFix if this isn't implicit
-        steps.push('In Repair');      // RepairStatus: Assigned, In Repair
-        steps.push('Ready for Delivery'); // RepairStatus: Repair Completed, Ready for Delivery
-        steps.push('Out for Delivery'); // DeliveryStatus: out_for_delivery
-        steps.push('Delivered');      // ActualDeliveryDate set, or DeliveryStatus: delivered
-    } else {
-        // Default flow for unspecified/standard mail-in
-        steps.push('Item Received'); // RepairStatus: Sent to Repair Manager (assuming mail-in)
-        steps.push('In Repair');
-        steps.push('Completed'); // Final step might just be 'Completed' if no return method tracked here
+
+    // --- Prioritize mapping based on progression ---
+
+    // 1. Final Completion States (Highest Priority Override)
+    // If any definitive final state indicator is true, set the current step to the very last step index.
+    // This ensures the stepper shows the final step as completed (all green checks).
+    const orderIsFulfilled = status === 'fulfilled';
+    const customerPickedUp = repairStatus === 'Picked Up by Customer' || (actualCustomerPickupDate && actualCustomerPickupDate instanceof Timestamp);
+    const kitFixDelivered = repairStatus === 'Delivered to Customer' || (actualKitFixDeliveryDate && actualKitFixDeliveryDate instanceof Timestamp);
+
+    if (orderIsFulfilled || customerPickedUp || kitFixDelivered) {
+        return { steps, currentStep: lastStepIndex }; // Process is completed, all steps should show green
+    }
+
+    // Order status 'completed' is also a final state indicator, often synonymous with 'fulfilled'
+    if (status === 'completed') {
+        // In the default flow, 'Completed' is the last step. In others, fulfilled is the last.
+        // Map to the last step index for 'completed' status as well, unless it's explicitly the 'Completed' label in default flow.
+        const completedStepIndex = steps.indexOf('Completed');
+        if (completedStepIndex !== -1 && completedStepIndex === lastStepIndex) {
+            return { steps, currentStep: completedStepIndex }; // Highlight 'Completed' if it's the last step
+        } else if (status === 'completed') {
+            // If status is 'completed' but 'Completed' isn't the last step label,
+            // it's likely a final state like 'fulfilled'. Map to the last step index.
+            return { steps, currentStep: lastStepIndex };
+        }
     }
 
 
-    // Determine current step based on repairStatus primarily, maybe cross-reference method-specific statuses
+    // 2. Map specific repair statuses to their corresponding step labels
+    // Determine the target step label based on the repairStatus.
+    // The order of cases is generally from beginning of the process towards the end.
     switch (repairStatus) {
+        // --- Initial State ---
         case 'Pending Routing':
-            currentStep = 0;
-            break;
-        case 'Routed to Dropoff':
-            currentStep = steps.indexOf('Awaiting Dropoff'); // Find index dynamically
-            if (currentStep === -1) currentStep = 1; // Fallback
-            break;
-        case 'Ready for Repair (from Dropoff)':
-            currentStep = steps.indexOf('Item Dropped Off'); // Find index
-            if (currentStep === -1) currentStep = 2; // Fallback
-            break;
-        case 'Sent to Repair Manager':
-            currentStep = steps.indexOf('Awaiting Pickup') !== -1 ? steps.indexOf('Awaiting Pickup') : (steps.indexOf('Awaiting Delivery') !== -1 ? steps.indexOf('Awaiting Delivery') : steps.indexOf('Item Received'));
-            if (currentStep === -1) currentStep = 1; // Fallback
-            break;
-        case 'Assigned':
-        case 'In Repair':
-            currentStep = steps.indexOf('In Repair');
-            if (currentStep === -1) currentStep = 2; // Fallback
-            break;
-        case 'Repair Completed':
-            // Step depends on return method
-            if (deliveryMethod === 'pickup') {
-                currentStep = steps.indexOf('Ready for Pickup');
-                if (currentStep === -1) currentStep = steps.indexOf('In Repair') + 1; // Fallback
-            } else if (deliveryMethod === 'delivery') {
-                currentStep = steps.indexOf('Ready for Delivery');
-                if (currentStep === -1) currentStep = steps.indexOf('In Repair') + 1; // Fallback
-            } else {
-                // Default/Dropoff flow reaching end
-                currentStep = steps.length - 1; // Assume last step if no specific return method status
-            }
-            if (currentStep === -1) currentStep = 3; // Final fallback
-            break;
-        case 'Ready for Pickup':
-            currentStep = steps.indexOf('Ready for Pickup');
-            if (currentStep === -1) currentStep = 3; // Fallback
-            break;
-        case 'Ready for Delivery':
-            currentStep = steps.indexOf('Ready for Delivery');
-            if (currentStep === -1) currentStep = 3; // Fallback
-            break;
-        case 'Out for Delivery':
-            currentStep = steps.indexOf('Out for Delivery');
-            if (currentStep === -1) currentStep = steps.indexOf('Ready for Delivery') + 1; // Fallback
+            potentialStepLabel = 'Order Placed'; // Index 0
             break;
 
-        // Add final status checks (Picked Up, Delivered, Completed)
-        // Check actual timestamps or final specific statuses if they exist
-        default:
-            // If repairStatus doesn't match a known step, try checking final states
-            if (order.processing.actualPickupDate || order.processing.pickupStatus === 'picked') {
-                currentStep = steps.indexOf('Picked Up');
-                if (currentStep === -1) currentStep = steps.length - 1; // Fallback to last step
-            } else if (order.processing.actualDeliveryDate || order.processing.deliveryStatus === 'delivered') {
-                currentStep = steps.indexOf('Delivered');
-                if (currentStep === -1) currentStep = steps.length - 1; // Fallback to last step
-            } else if (order.processing.actualDropoffDate || order.processing.dropoffStatus === 'dropped_off') {
-                currentStep = steps.indexOf('Item Dropped Off'); // Dropped off is a middle step
-                if (currentStep === -1) currentStep = 2; // Fallback
-            } else if (order.processing.status === 'completed') {
-                currentStep = steps.length - 1; // Assume last step if processing.status is completed
+        // --- Initial Routing/Scheduling states (item is on its way TO KitFix or awaiting dropoff) ---
+        case 'Routed to Dropoff':
+            // In Dropoff flow: User wants Green 0, Highlighted 1 ('Awaiting Dropoff')
+            potentialStepLabel = 'Awaiting Dropoff'; // Index 1 in dropoff flow
+            break;
+
+        case 'Scheduled for Pickup (KitFix)':
+        case 'Routed for Pickup (KitFix)':
+            // In Pickup flow: User wants Green 0, Highlighted 1 ('KitFix Picking Up')
+            potentialStepLabel = 'KitFix Picking Up'; // Index 1 in pickup flow
+            break;
+
+        // case 'Item Sent to KitFix':
+        //     // In Delivery flow: Item is on its way via mail-in - step 1
+        //     potentialStepLabel = 'Item Sent to KitFix'; // Index 1 in delivery flow
+        //     break;
+
+
+        // --- Initial Receipt states (item has arrived at KitFix) ---
+        // These map to the step *after* the initial pickup/dropoff/mail-in, but *before* In Repair.
+        case 'Item Dropped Off':
+        case 'Ready for Repair (from Dropoff)': // Item is at KitFix via customer dropoff, ready for repair routing/assignment
+            // In Dropoff flow: User wants Green 0, Highlighted 1 ('Item Received'). Mapping to Index 1 contradicts step 2 'Item Dropped Off'.
+            // Based on your feedback, the requested state for "Item Dropped Off" was green 0, highlighted 1, which means mapping to 'Awaiting Dropoff'.
+            // This seems inconsistent with the actual status name. Let's stick to mapping the status name to the corresponding label, which is 'Item Dropped Off' (Index 2).
+            potentialStepLabel = 'Item Dropped Off'; // Index 2 in dropoff flow
+            break;
+
+        case 'Item Picked Up (KitFix)':
+        case 'Ready for Repair (from Pickup)': // Item is at KitFix via KitFix pickup, ready for repair routing/assignment
+            // In Pickup flow: User wants Green up to Index 1 ('KitFix Picking Up'), highlighted Index 3 ('In Repair').
+            // This skips Index 2 ('Item Picked Up'). Explicitly map to 'In Repair' as requested.
+            potentialStepLabel = 'In Repair'; // Index 3 in pickup flow (skipping Index 2)
+            break;
+
+        case 'Sent to Repair Manager': // Item has arrived at KitFix after mail-in/shipping, sent to repair queue
+            // In Delivery flow: Maps to step representing arrival at KitFix facility based on the flow.
+            if (steps.includes('Item Received at KitFix')) { // Specific label for delivery flow
+                potentialStepLabel = 'Item Received at KitFix'; // Index 2 in delivery flow
+            } else {
+                // Fallback for other flows if 'Sent to Repair Manager' somehow used
+                console.warn(`repairStatus 'Sent to Repair Manager' encountered in non-'delivery' flow? Order ${order?.id} (Method: ${deliveryMethod}). Attempting fallback mapping.`);
+                if (steps.includes('Item Dropped Off')) potentialStepLabel = 'Item Dropped Off'; // Index 2 in dropoff
+                else if (steps.includes('Item Picked Up')) potentialStepLabel = 'Item Picked Up'; // Index 2 in pickup
+                else if (steps.includes('Item Received')) potentialStepLabel = 'Item Received'; // Index 1 in default
             }
-            // If none match, keep initial 0 or a fallback
-            if (currentStep === 0 && repairStatus !== 'Pending Routing') {
-                // If status is not pending routing but we couldn't map it, default to step 1 or 2?
-                // This indicates missing mapping logic.
-                // For robustness, maybe set to 1 or 2 as a visual indicator of *some* progress.
-                currentStep = 1; // Assume at least 'Item Received' or similar
-                console.warn("Could not map repairStatus to step:", repairStatus, order.id);
+            break;
+
+        // --- Repair states (item is currently being repaired) ---
+        // These statuses map to the 'In Repair' step.
+        case 'Assigned': // Assigned to technician
+        case 'In Repair':
+            // User wants green up to Index 1/2, highlighted 'In Repair' (Index 3 or 4).
+            potentialStepLabel = 'In Repair'; // Maps to label in all flows where it exists
+            break;
+
+        // --- Post-Repair / Fulfillment Routing states ---
+        // These statuses map to the step *after* 'In Repair' but before the final pickup/delivery.
+        case 'Repair Completed':
+            // User wants green up to "In Repair", highlighted "Completed" (meaning the step AFTER In Repair).
+            // Find the appropriate label that exists in the *current* flow's steps array.
+            if (steps.includes('Ready for Pickup')) { // For dropoff/pickup fulfillment flow
+                potentialStepLabel = 'Ready for Pickup'; // Index 4 in dropoff flow
+            } else if (steps.includes('Ready for Delivery')) { // For pickup/delivery fulfillment flows
+                potentialStepLabel = 'Ready for Delivery'; // Index 4 in pickup, Index 4 in delivery flow
+            } else if (steps.includes('Completed')) { // For the default fallback flow
+                potentialStepLabel = 'Completed'; // Index 3 in default flow
+            } else {
+                console.error(`repairStatus 'Repair Completed' encountered but no standard post-repair step found for order ${order?.id} (Flow: ${flowIdentifier}). Steps: [${steps.join(', ')}]`);
+            }
+            break;
+
+        case 'Ready for Customer Pickup':
+            // User wants green up to "In Repair", highlighted "Completed" (meaning 'Ready for Pickup').
+            potentialStepLabel = 'Ready for Pickup'; // Index 4 in dropoff/pickup fulfillment flow
+            break;
+
+        case 'Ready for KitFix Delivery':
+            // User wants green up to "In Repair", highlighted "Completed" (meaning 'Ready for Delivery').
+            potentialStepLabel = 'Ready for Delivery'; // Index 4 in pickup and delivery fulfillment flows
+            break;
+
+        case 'Scheduled for Pickup (Customer)':
+            // User wants green up to "In Repair", highlighted "Completed" (meaning 'Ready for Pickup').
+            // This status means customer pickup from KitFix is scheduled. Still 'Ready for Pickup'.
+            potentialStepLabel = 'Ready for Pickup'; // Index 4 in dropoff/pickup fulfillment flow
+            break;
+
+        case 'Scheduled for Delivery (KitFix)':
+            // User wants green up to "In Repair", highlighted "Completed" (meaning 'Ready for Delivery').
+            // This status means KitFix delivery is scheduled. Still 'Ready for Delivery'.
+            potentialStepLabel = 'Ready for Delivery'; // Index 4 in pickup and delivery fulfillment flows
+            break;
+
+        case 'Out for Delivery':
+            // User wants green up to "In Repair", highlighted "Completed" (meaning 'Out for Delivery').
+            potentialStepLabel = 'Out for Delivery'; // Index 5 in delivery fulfillment flow
+            break;
+
+        // --- Final Fulfillment States (handled by the override at the top) ---
+        // 'Picked Up by Customer' -> Handled by override (last step - all green)
+        // 'Delivered to Customer' -> Handled by override (last step - all green)
+        // 'fulfilled' order status -> Handled by override (last step - all green)
+
+
+        // --- Fallback/Unhandled Statuses ---
+        default:
+            // If repairStatus is set but didn't match any case above, and it's not 'Pending Routing',
+            // it means there's an unmapped status. Log a warning.
+            if (repairStatus && repairStatus !== 'Pending Routing') {
+                console.warn(`Unmapped repairStatus '${repairStatus}' for order ${order?.id} (Flow: ${flowIdentifier}). Cannot determine specific step label.`);
+            }
+            // If repairStatus is null/undefined/unmapped AND the main order status is 'pending',
+            // ensure we are on step 0. This covers the initial state reliably.
+            if ((!repairStatus || repairStatus === 'Pending Routing') && status === 'pending') {
+                potentialStepLabel = 'Order Placed'; // Explicitly force to step 0 label if pending and no other status matched
             }
             break;
     }
 
-    // Ensure currentStep is within bounds [0, steps.length - 1]
-    currentStep = Math.max(0, Math.min(currentStep, steps.length - 1));
+    // Find the index for the determined label within the determined steps array
+    // Only update currentStepIndex if a valid label was determined AND found in steps.
+    if (potentialStepLabel !== null) {
+        const index = steps.indexOf(potentialStepLabel);
+        if (index !== -1) {
+            currentStepIndex = index;
+        } else {
+            // This indicates a configuration mismatch: a repairStatus mapped to a label
+            // that doesn't exist in the steps list for this order's flow.
+            // Log an error. currentStepIndex remains at its default 0 or a previous value.
+            console.error(`Mapped step label '${potentialStepLabel}' (from repairStatus '${repairStatus}') not found in steps array for order ${order?.id} (Flow: ${flowIdentifier}). Steps: [${steps.join(', ')}]`);
+        }
+    }
+    // else: potentialStepLabel remained null (unmapped status, not pending/initial).
+    // currentStepIndex remains at its initial 0.
 
-    return { steps, currentStep };
+
+    // Ensure currentStep is within bounds [0, steps.length - 1] - Important safety
+    currentStepIndex = Math.max(0, Math.min(currentStepIndex, lastStepIndex));
+
+    // Added a final check specifically for the 'Ready for...' statuses IF
+    // the determined index is still 0, which indicates a likely mismatch.
+    // This acts as a safeguard to bump it forward if the flow seems to be
+    // identified incorrectly, preventing it from sticking at step 0 for later statuses.
+    if (currentStepIndex === 0 && (repairStatus === 'Ready for Customer Pickup' || repairStatus === 'Ready for KitFix Delivery')) {
+        // If we're in a 'Ready for...' status but the index is still 0,
+        // it means the steps array determined above didn't contain the
+        // 'Ready for Pickup' or 'Ready for Delivery' label.
+        // This happens if the default flow was chosen but the status is for a specific flow.
+        // Let's try to find the 'In Repair' step (typically before 'Ready for...')
+        // or the step after 'In Repair' in the default flow ('Completed')
+        // as a better fallback than step 0.
+        const inRepairIndex = steps.indexOf('In Repair');
+        const completedIndex = steps.indexOf('Completed');
+
+        if (inRepairIndex !== -1 && inRepairIndex < lastStepIndex) {
+            // If 'In Repair' exists and isn't the last step, highlight the step *after* it.
+            currentStepIndex = inRepairIndex + 1;
+            console.warn(`Order ${order?.id}: Safeguard: 'Ready for...' status but index was 0. Advancing to step after 'In Repair' (${currentStepIndex}).`);
+        } else if (completedIndex !== -1) {
+            // If 'In Repair' isn't found but 'Completed' is (likely default flow), highlight 'Completed'.
+            currentStepIndex = completedIndex;
+            console.warn(`Order ${order?.id}: Safeguard: 'Ready for...' status but index was 0. Advancing to 'Completed' step (${currentStepIndex}).`);
+        } else if (lastStepIndex > 0) {
+            // Final safety: if we still can't find relevant steps, go to step 1
+            currentStepIndex = 1;
+            console.warn(`Order ${order?.id}: Safeguard: 'Ready for...' status but index was 0 and standard post-repair steps not found. Advancing to step 1 (${currentStepIndex}).`);
+        }
+        // If lastStepIndex is 0, currentStepIndex stays 0.
+    }
+
+
+    return { steps, currentStep: currentStepIndex };
 };
 
+
+/**
+ * Dashboard component that displays user-specific information and allows management of repair orders.
+ *
+ * Utilizes Firebase Authentication to manage user sessions and Firestore to fetch user data
+ * and associated orders. Provides functionality to cancel orders if they are still pending.
+ *
+ * - Redirects unauthenticated users to the login page.
+ * - Fetches and displays user data and repair order history.
+ * - Allows users to start a new repair or cancel existing orders.
+ *
+ * State:
+ * - `user`: Current authenticated user.
+ * - `loadingAuth`: Authentication loading state.
+ * - `errorAuth`: Authentication error state.
+ * - `userData`: Current user's data from Firestore.
+ * - `orders`: List of user's orders.
+ * - `loadingData`: Loading state for data fetching.
+ * - `isCancellingId`: ID of the order currently being cancelled.
+ *
+ * Effects:
+ * - Monitors authentication state changes to fetch user data and orders.
+ * - Handles logout when no user is authenticated.
+ *
+ * Returns a JSX structure rendering the dashboard with user info, repair history, and action buttons.
+ */
 
 const Dashboard = () => {
     const [user, loadingAuth, errorAuth] = useAuthState(auth);
@@ -192,9 +376,10 @@ const Dashboard = () => {
     useEffect(() => {
         if (!user && !loadingAuth) {
             console.log("No user logged in, logging out.");
-            logoutUser();
+            // logoutUser(); // Assuming this handles navigation
+            // If logoutUser doesn't navigate, add: navigate('/login');
         }
-    }, [user, loadingAuth, navigate]);
+    }, [user, loadingAuth, navigate]); // Added navigate to dependency array
 
     useEffect(() => {
         const fetchData = async () => {
@@ -208,6 +393,7 @@ const Dashboard = () => {
                     } else {
                         console.warn("User document not found for UID:", user.uid);
                         setUserData(null);
+                        // Optionally force logout or profile completion flow here
                     }
 
                     const ordersCollectionRef = collection(db, 'orders');
@@ -215,6 +401,7 @@ const Dashboard = () => {
                     const querySnapshot = await getDocs(q);
                     const ordersList = querySnapshot.docs.map(d => {
                         const data = d.data();
+                        // Ensure all nested objects exist with default values for safety
                         return {
                             id: d.id,
                             ...data,
@@ -232,23 +419,19 @@ const Dashboard = () => {
                     setLoadingData(false);
                 }
             } else {
+                // Clear data if user logs out while component is mounted
                 setUserData(null);
                 setOrders([]);
                 setLoadingData(false);
             }
         };
 
-        if (user) {
+        // Fetch data only when user object changes or auth status changes after initial load
+        if (user || !loadingAuth) {
             fetchData();
-        } else if (!loadingAuth) {
-            setUserData(null);
-            setOrders([]);
-            setLoadingData(false);
         }
 
-
-    }, [user, db]);
-
+    }, [user, loadingAuth, db]); // Added loadingAuth to dependency array
 
     const cancelOrder = async (orderId: string) => {
         const orderToCancel = orders.find(o => o.id === orderId);
@@ -257,6 +440,7 @@ const Dashboard = () => {
             return;
         }
 
+        // Allow cancelling if status is pending
         const canCancel = orderToCancel.processing?.status === 'pending';
         if (!canCancel) {
             toast.warning(`Cannot cancel order ${orderId.slice(0, 6).toUpperCase()}. It is already being processed.`);
@@ -266,12 +450,23 @@ const Dashboard = () => {
         if (window.confirm('Are you sure you want to cancel this order? This action cannot be undone.')) {
             setIsCancellingId(orderId);
             try {
-                // Optionally update status to 'cancelled' instead of deleting for history
-                // await updateDoc(doc(db, 'orders', orderId), { processing: { ...orderToCancel.processing, status: 'cancelled' as OrderStatus }, updatedAt: serverTimestamp() });
-                // setOrders(orders.map(o => o.id === orderId ? { ...o, processing: { ...o.processing, status: 'cancelled' } as Order } : o)); // Optimistic update
+                // Option 1: Update status to 'cancelled' (Recommended for history)
+                // Need serverTimestamp() from Firestore for this
+                // import { serverTimestamp } from 'firebase/firestore';
+                // await updateDoc(doc(db, 'orders', orderId), {
+                //     'processing.status': 'cancelled' as OrderStatus,
+                //     updatedAt: serverTimestamp() // Use server timestamp
+                // });
+                // // Optimistically update state
+                // setOrders(orders.map(o => o.id === orderId ?
+                //     { ...o, processing: { ...(o.processing as ProcessingInfo), status: 'cancelled' as OrderStatus }, updatedAt: new Date() } // Client date for immediate display
+                //     : o
+                // ));
 
+                // Option 2: Delete the document (Your current implementation)
                 await deleteDoc(doc(db, 'orders', orderId));
                 setOrders(orders.filter(order => order.id !== orderId));
+
 
                 toast.success(`Order ${orderId.slice(0, 6).toUpperCase()} cancelled successfully!`);
             } catch (error) {
@@ -283,7 +478,8 @@ const Dashboard = () => {
         }
     };
 
-    if (loadingAuth || (user && loadingData) || (!user && loadingData)) {
+    // Loading states
+    if (loadingAuth) {
         return (
             <div className="min-h-screen flex items-center justify-center">
                 <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-electric-blue"></div>
@@ -299,6 +495,7 @@ const Dashboard = () => {
         );
     }
 
+    // If auth is loaded but no user
     if (!user) {
         return (
             <div className="min-h-screen flex items-center justify-center text-center px-4">
@@ -309,12 +506,23 @@ const Dashboard = () => {
         );
     }
 
+    // If user exists but data is still loading
+    if (loadingData) {
+        return (
+            <div className="min-h-screen flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-electric-blue"></div>
+            </div>
+        );
+    }
+
+    // If user exists but no user data found (maybe redirect to profile creation?)
     if (!userData) {
         return (
             <div className="min-h-screen flex items-center justify-center text-center px-4">
                 <h1 className="text-2xl font-bold mb-4">Welcome New User!</h1>
                 <p className="text-gray-700 mb-6">Please complete your profile to access your dashboard.</p>
-                <Button onClick={() => logoutUser()} variant="outline">Logout</Button>
+                {/* Decide what to do if no user data - maybe force profile completion */}
+                <Button onClick={() => logoutUser()} variant="outline">Logout</Button> {/* Or redirect to profile creation page */}
             </div>
         );
     }
@@ -382,7 +590,8 @@ const Dashboard = () => {
                                     } else if (!paid) {
                                         statusBadge = <Badge key="payment" variant="destructive" className="capitalize">Pending Payment</Badge>;
                                     } else {
-                                        statusBadge = <Badge key="processing" variant="default" className="capitalize">{order.processing?.repairStatus || 'Processing'}</Badge>;
+                                        // Use repairStatus for badge unless it's null, then fallback to general status
+                                        statusBadge = <Badge key="processing" variant="default" className="capitalize">{order.processing?.repairStatus || order.processing?.status || 'Processing'}</Badge>;
                                     }
 
 
@@ -420,9 +629,7 @@ const Dashboard = () => {
                                             </DialogTrigger>
 
                                             {/* Dialog Content */}
-                                            {/* Added w-full for mobile, adjusted padding and max-w */}
-                                            <DialogContent className="w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-xl overflow-y-auto max-h-[90vh] p-4 sm:p-6 md:p-8">
-
+                                            <DialogContent className="w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-xl overflow-y-auto max-h-[90vh] p-2 sm:p-4 md:p-8">
                                                 <DialogHeader>
                                                     <DialogTitle className="text-2xl font-bold text-electric-blue">
                                                         Order #{`KF${order.id.slice(0, 6).toUpperCase()}`}
@@ -433,141 +640,137 @@ const Dashboard = () => {
                                                 </DialogHeader>
 
                                                 {/* Progress Stepper */}
-                                                <div className="py-4 flex flex-col space-between">
+                                                <div className="py-4 flex flex-col w-full">
                                                     <h3 className="text-lg font-semibold mb-4">Order Progress</h3>
-                                                    {order.processing ? (
-                                                        <ProgressStepper
-                                                            steps={getProcessingSteps(order).steps}
-                                                            currentStep={getProcessingSteps(order).currentStep}
-                                                        />
+                                                    {order.processing?.status !== 'cancelled' ? (
+                                                        <div className="w-full overflow-x-auto">
+                                                            <div className="min-w-[320px] sm:min-w-0">
+                                                                <ProgressStepper
+                                                                    steps={getProcessingSteps(order).steps}
+                                                                    currentStep={getProcessingSteps(order).currentStep}
+                                                                    direction="vertical"
+                                                                />
+                                                            </div>
+                                                        </div>
                                                     ) : (
-                                                        <p className="text-gray-600 text-sm">Progress information not available.</p>
+                                                        <p className="text-red-600 text-sm font-semibold text-center">This order has been cancelled.</p>
                                                     )}
-
                                                 </div>
-
 
                                                 {/* <Separator className="my-4" /> */}
 
-                                                {/* Detailed Order Info */}
-                                                {/* Changed grid to md:grid-cols-2 */}
+                                                {/* Details */}
                                                 <div className="space-y-4 text-gray-700 text-sm">
                                                     <h3 className="text-lg font-semibold mb-2">Details</h3>
-                                                    <div className="grid grid-cols-1 md:grid-cols-1 gap-4">
-                                                        {/* Added break-words to spans with potentially long values */}
-                                                        <div className="flex items-center gap-2">
-                                                            <Tag className="h-4 w-4 text-blue-500 shrink-0" /> {/* shrink-0 prevents icon shrinking */}
+                                                    <div className="grid grid-cols-1 gap-4">
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <Tag className="h-4 w-4 text-blue-500 shrink-0" />
                                                             <strong>Service:</strong> <span className="break-words">{repairDescription}</span>
                                                         </div>
-                                                        <div className="flex items-center gap-2">
+                                                        <div className="flex flex-wrap items-center gap-2">
                                                             <DollarSign className="h-4 w-4 text-lime-green shrink-0" />
                                                             <strong>Amount:</strong> <span>R{order.price?.toFixed(2) || '0.00'}</span>
                                                         </div>
                                                         {order.processing?.deliveryMethod && (
-                                                            <div className="flex items-center gap-2">
+                                                            <div className="flex flex-wrap items-center gap-2">
                                                                 <Truck className="h-4 w-4 text-gray-600 shrink-0" />
                                                                 <strong>Method:</strong> <span className="capitalize">{order.processing.deliveryMethod}</span>
                                                             </div>
                                                         )}
-
+                                                        {order.createdAt && typeof order.createdAt === 'object' && 'seconds' in order.createdAt && (
+                                                            <div className="flex flex-wrap items-center gap-2">
+                                                                <CalendarDays className="h-4 w-4 text-orange-500 shrink-0" />
+                                                                <strong>Order Placed:</strong> <span>{format(new Date(order.createdAt.seconds * 1000), 'dd MMM yyyy HH:mm')}</span>
+                                                            </div>
+                                                        )}
                                                         {order.processing?.preferredDate && (
-                                                            <div className="flex items-center gap-2">
+                                                            <div className="flex flex-wrap items-center gap-2">
                                                                 <CalendarDays className="h-4 w-4 text-purple-500 shrink-0" />
                                                                 <strong>Preferred Date:</strong> <span>{order.processing.preferredDate}</span>
                                                             </div>
                                                         )}
-                                                        {order.processing?.scheduledDropoffDate?.seconds && (
-                                                            <div className="flex items-center gap-2 md:col-span-2">
+                                                        {order.processing?.actualCustomerDropoffDate?.seconds && (
+                                                            <div className="flex flex-wrap items-center gap-2">
                                                                 <CalendarDays className="h-4 w-4 text-blue-500 shrink-0" />
-                                                                <strong>Scheduled Dropoff:</strong> <span>{format(new Date(order.processing.scheduledDropoffDate.seconds * 1000), 'dd MMM yyyy HH:mm')}</span>
+                                                                <strong>Actual Dropoff:</strong> <span>{format(new Date(order.processing.actualCustomerDropoffDate.seconds * 1000), 'dd MMM yyyy HH:mm')}</span>
                                                             </div>
                                                         )}
-                                                        {order.processing?.actualDropoffDate?.seconds && (
-                                                            <div className="flex items-center gap-2 md:col-span-2">
+                                                        {order.processing?.actualInitialPickupDate?.seconds && (
+                                                            <div className="flex flex-wrap items-center gap-2">
                                                                 <CalendarDays className="h-4 w-4 text-blue-500 shrink-0" />
-                                                                <strong>Actual Dropoff:</strong> <span>{format(new Date(order.processing.actualDropoffDate.seconds * 1000), 'dd MMM yyyy HH:mm')}</span>
+                                                                <strong>Actual Picked Up:</strong> <span>{format(new Date(order.processing?.actualInitialPickupDate?.seconds * 1000), 'dd MMM yyyy HH:mm')}</span>
                                                             </div>
                                                         )}
-                                                        {order.processing?.scheduledPickupDate?.seconds && (
-                                                            <div className="flex items-center gap-2 md:col-span-2">
+                                                        {order.processing?.actualCustomerPickupDate && typeof order.processing.actualCustomerPickupDate === 'object' && 'seconds' in order.processing.actualCustomerPickupDate && (
+                                                            <div className="flex flex-wrap items-center gap-2">
                                                                 <CalendarDays className="h-4 w-4 text-blue-500 shrink-0" />
-                                                                <strong>Scheduled Pickup:</strong> <span>{format(new Date(order.processing.scheduledPickupDate.seconds * 1000), 'dd MMM yyyy HH:mm')}</span>
+                                                                <strong>Actual Picked Up by Customer:</strong> <span>{format(new Date(order.processing.actualCustomerPickupDate.seconds * 1000), 'dd MMM yyyy HH:mm')}</span>
                                                             </div>
                                                         )}
-                                                        {order.processing?.actualPickupDate?.seconds && (
-                                                            <div className="flex items-center gap-2 md:col-span-2">
+                                                        {order.processing?.actualKitFixDeliveryDate && typeof order.processing.actualKitFixDeliveryDate === 'object' && 'seconds' in order.processing.actualKitFixDeliveryDate && (
+                                                            <div className="flex flex-wrap items-center gap-2">
                                                                 <CalendarDays className="h-4 w-4 text-blue-500 shrink-0" />
-                                                                <strong>Actual Pickup:</strong> <span>{format(new Date(order.processing.actualPickupDate.seconds * 1000), 'dd MMM yyyy HH:mm')}</span>
-                                                            </div>
-                                                        )}
-                                                        {order.processing?.scheduledDeliveryDate?.seconds && (
-                                                            <div className="flex items-center gap-2 md:col-span-2">
-                                                                <CalendarDays className="h-4 w-4 text-blue-500 shrink-0" />
-                                                                <strong>Scheduled Delivery:</strong> <span>{format(new Date(order.processing.scheduledDeliveryDate.seconds * 1000), 'dd MMM yyyy HH:mm')}</span>
-                                                            </div>
-                                                        )}
-                                                        {order.processing?.actualDeliveryDate?.seconds && (
-                                                            <div className="flex items-center gap-2 md:col-span-2">
-                                                                <CalendarDays className="h-4 w-4 text-blue-500 shrink-0" />
-                                                                <strong>Actual Delivery:</strong> <span>{format(new Date(order.processing.actualDeliveryDate.seconds * 1000), 'dd MMM yyyy HH:mm')}</span>
+                                                                <strong>Actual Delivered:</strong> <span>{format(new Date(order.processing.actualKitFixDeliveryDate.seconds * 1000), 'dd MMM yyyy HH:mm')}</span>
                                                             </div>
                                                         )}
 
-
-                                                        {/* Display relevant location */}
+                                                        {/* Locations */}
                                                         {order.processing?.deliveryMethod === 'delivery' && order.contactInfo?.address && (
-                                                            <div className="flex items-start gap-2 md:col-span-2">
+                                                            <div className="flex flex-wrap items-start gap-2">
                                                                 <MapPin className="h-4 w-4 text-red-500 shrink-0 mt-1" />
                                                                 <strong>Delivery Address:</strong> <span className="break-words">{order.contactInfo.address}</span>
                                                             </div>
                                                         )}
-                                                        {order.processing?.dropoffLocation && order.processing?.deliveryMethod === 'dropoff' && (
-                                                            <div className="flex items-start gap-2 md:col-span-2">
+                                                        {order.processing?.customerDropoffLocation && order.processing?.deliveryMethod === 'dropoff' && (
+                                                            <div className="flex flex-wrap items-start gap-2">
                                                                 <MapPin className="h-4 w-4 text-red-500 shrink-0 mt-1" />
-                                                                <strong>Dropoff Location:</strong> <span className="break-words">{order.processing.dropoffLocation}</span>
+                                                                <strong>Dropoff Location:</strong> <span className="break-words">{order.processing.customerDropoffLocation}</span>
                                                             </div>
                                                         )}
-                                                        {order.processing?.pickupLocation && order.processing?.deliveryMethod === 'pickup' && (
-                                                            <div className="flex items-start gap-2 md:col-span-2">
+                                                        {order.processing?.customerPickupLocation && (order.processing?.deliveryMethod === 'dropoff' || order.processing?.fulfillmentMethod === 'pickup') && (
+                                                            <div className="flex flex-wrap items-start gap-2">
                                                                 <MapPin className="h-4 w-4 text-red-500 shrink-0 mt-1" />
-                                                                <strong>Pickup Location:</strong> <span className="break-words">{order.processing.pickupLocation}</span>
+                                                                <strong>Customer Pickup Location:</strong> <span className="break-words">{order.processing.customerPickupLocation}</span>
+                                                            </div>
+                                                        )}
+                                                        {order.processing?.initialPickupLocation && order.processing?.deliveryMethod === 'pickup' && (
+                                                            <div className="flex flex-wrap items-start gap-2">
+                                                                <MapPin className="h-4 w-4 text-red-500 shrink-0 mt-1" />
+                                                                <strong>KitFix Pickup Location:</strong> <span className="break-words">{order.processing.initialPickupLocation}</span>
+                                                            </div>
+                                                        )}
+                                                        {order.processing?.kitFixDeliveryAddress && (order.processing?.deliveryMethod === 'pickup' || order.processing?.fulfillmentMethod === 'delivery') && (
+                                                            <div className="flex flex-wrap items-start gap-2">
+                                                                <MapPin className="h-4 w-4 text-red-500 shrink-0 mt-1" />
+                                                                <strong>KitFix Delivery Address:</strong> <span className="break-words">{order.processing.kitFixDeliveryAddress}</span>
                                                             </div>
                                                         )}
 
-
-                                                        {/* Display Notes */}
+                                                        {/* Notes */}
                                                         {order.notes && (
-                                                            <div className="flex items-start gap-2 md:col-span-2">
+                                                            <div className="flex flex-wrap items-start gap-2">
                                                                 <Package className="h-4 w-4 text-blue-500 shrink-0 mt-1" />
                                                                 <strong>Notes:</strong> <span className="break-words">{order.notes}</span>
                                                             </div>
                                                         )}
                                                     </div>
 
-                                                    {/* Image Carousel (using order.photos) */}
-                                                    {/* {order.photos && order.photos.length > 0 && (
-                                                        <div className="py-4">
-                                                            <h3 className="text-lg font-semibold mb-4">Uploaded Photos</h3>
-                                                            <OrderImageCarousel images={order.photos} /> {/* Pass order.photos 
-                                                        </div>
-                                                    )}*/}
+                                                    {/* <Separator className="my-4" /> */}
 
-                                                    <Separator className="my-4" />
-
-                                                    {/* Contact Info in Dialog */}
+                                                    {/* Contact Info */}
                                                     {order.contactInfo && (
-                                                        <div className=" text-gray-700 text-sm">
+                                                        <div className="text-gray-700 text-sm">
                                                             <h3 className="text-lg font-semibold mb-2">Contact Information</h3>
                                                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                                                <div className="flex items-center gap-2">
+                                                                <div className="flex flex-wrap items-center gap-2">
                                                                     <User className="h-4 w-4 text-gray-500 shrink-0" />
                                                                     <span>{order.contactInfo?.name || 'N/A'}</span>
                                                                 </div>
-                                                                <div className="flex items-center gap-2">
+                                                                <div className="flex flex-wrap items-center gap-2">
                                                                     <Mail className="h-4 w-4 text-gray-500 shrink-0" />
                                                                     <span>{order.contactInfo?.email || 'N/A'}</span>
                                                                 </div>
-                                                                <div className="flex items-center gap-2">
+                                                                <div className="flex flex-wrap items-center gap-2">
                                                                     <Phone className="h-4 w-4 text-gray-500 shrink-0" />
                                                                     <span>{order.contactInfo?.phone || 'N/A'}</span>
                                                                 </div>
@@ -575,10 +778,8 @@ const Dashboard = () => {
                                                         </div>
                                                     )}
 
-
                                                     {/* Action Buttons */}
-                                                    {/* Only show 'Continue Repair' if not paid and not cancelled/completed */}
-                                                    {order.payment?.status === 'unpaid' && order.processing?.status !== 'cancelled' && order.processing?.status !== 'completed' && (
+                                                    {order.payment?.status === 'unpaid' && order.processing?.status !== 'cancelled' && order.processing?.status !== 'completed' && order.processing?.status !== 'fulfilled' && (
                                                         <div className="flex flex-col sm:flex-row justify-between gap-4 pt-4">
                                                             {order.stepCompleted === 'schedule' ? (
                                                                 <Link to={`/payment?orderId=${order.id}`} className="w-full">
@@ -589,8 +790,6 @@ const Dashboard = () => {
                                                                     <Button className="w-full btn-primary">Continue Repair</Button>
                                                                 </Link>
                                                             )}
-
-                                                            {/* Cancel button */}
                                                             {order.processing?.status === 'pending' && (
                                                                 <Button
                                                                     variant="destructive"
@@ -605,7 +804,6 @@ const Dashboard = () => {
                                                         </div>
                                                     )}
 
-                                                    {/* Message if order is cancelled */}
                                                     {order.processing?.status === 'cancelled' && (
                                                         <div className="pt-4 text-center text-red-600 font-semibold">
                                                             This order has been cancelled.

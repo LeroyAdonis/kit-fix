@@ -105,6 +105,7 @@ const GetQuote = () => {
                 const orderRef = doc(db, 'orders', orderId);
                 const orderSnap = await getDoc(orderRef);
 
+
                 if (orderSnap.exists()) {
                     const orderData = orderSnap.data();
 
@@ -114,7 +115,11 @@ const GetQuote = () => {
                     if (orderData.notes) setAdditionalNotes(orderData.notes);
 
                     // Redirect if quote step is already completed
-                    if (orderData.stepCompleted === 'quote') {
+
+                    if (
+                        orderData.stepCompleted === 'quote' &&
+                        !(location.state && location.state.fromSchedule)
+                    ) {
                         // Pass necessary data to the next step via state if not solely relying on Firestore
                         const selectedRepairOption = repairOptions.find(option => option.id === orderData.repairType);
                         navigate(`/schedule-service?orderId=${orderId}`, {
@@ -123,12 +128,12 @@ const GetQuote = () => {
                                 photos: orderData.photos || [],
                                 selectedOption: orderData.repairType,
                                 price: orderData.price,
-                                duration: selectedRepairOption?.duration, // Get duration based on fetched type
+                                duration: selectedRepairOption?.duration,
                                 notes: orderData.notes || "",
                                 description: orderData.repairDescription || ""
                             }
                         });
-                        setPageLoading(false); // Stop loading before redirect
+                        setPageLoading(false);
                         return; // Stop further execution
                     }
 
@@ -320,7 +325,7 @@ const GetQuote = () => {
                                     placeholder="Tell us any specific details about your jersey repair..."
                                     value={additionalNotes}
                                     onChange={(e) => setAdditionalNotes(e.target.value)}
-                                    className="min-h-[120px]"
+                                    className="min-h-[120px] focus:border-electric-blue focus:ring-electric-blue"
                                 />
                             </div>
 

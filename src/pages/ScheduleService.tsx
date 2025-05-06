@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/firebaseConfig";
 import { toast } from "sonner"; // Use sonner toast
@@ -46,11 +46,14 @@ type ScheduleFormData = z.infer<typeof scheduleSchema>;
 const ScheduleService = () => {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
+    const location = useLocation();
     const orderId = searchParams.get("orderId") || (location as any).state?.orderId;;
 
     const [pageLoading, setPageLoading] = useState(true); // Loading state for initial fetch
     const [isSaving, setIsSaving] = useState(false); // Loading state for form submission
     const [fetchedRepairType, setFetchedRepairType] = useState(''); // From Quote Page
+
+    const fromPayment = location.state?.fromPayment;
 
     const {
         register,
@@ -129,7 +132,7 @@ const ScheduleService = () => {
 
 
                     // Check if schedule step is already completed and redirect
-                    if (data.stepCompleted === 'schedule') {
+                    if (data.stepCompleted === 'schedule' && !location.state && fromPayment) {
                         console.log("Schedule step already completed for order", orderId);
                         navigate(`/payment?orderId=${orderId}`);
                         setPageLoading(false);
@@ -201,6 +204,7 @@ const ScheduleService = () => {
 
             function removeUndefined<T extends object>(obj: T): Partial<T> {
                 return Object.fromEntries(
+                    // eslint-disable-next-line @typescript-eslint/no-unused-vars
                     Object.entries(obj).filter(([_, v]) => v !== undefined)
                 ) as Partial<T>;
             }
@@ -403,7 +407,12 @@ const ScheduleService = () => {
 
                             {/* Back and Continue Buttons */}
                             <div className="flex justify-between mt-6">
-                                <Button type="button" variant="outline" onClick={() => navigate(`/get-quote?orderId=${orderId}`)} disabled={isSaving}>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => navigate(`/get-quote?orderId=${orderId}`, { state: { fromSchedule: true } })}
+                                    disabled={isSaving}
+                                >
                                     Back to Quote
                                 </Button>
                                 <Button type='submit' disabled={isSaving}>

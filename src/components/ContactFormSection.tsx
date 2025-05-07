@@ -40,16 +40,34 @@ const ContactFormSection = () => {
         },
     });
 
-    function onSubmit(data: FormValues) {
-        // In a real application, you would send this data to your backend
-        console.log('Form submitted:', data);
-
-        toast({
-            title: "Message sent!",
-            description: "Thank you for your message. We will get back to you soon.",
-        });
-
-        form.reset();
+    async function onSubmit(data: FormValues) {
+        try {
+            const response = await fetch('https://kit-fix.onrender.com/api/contact', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+            });
+            const result = await response.json();
+            if (result.success) {
+                toast({
+                    title: "Message sent!",
+                    description: "Thank you for your message. We will get back to you soon.",
+                });
+                form.reset();
+            } else {
+                toast({
+                    title: "Error",
+                    description: "There was a problem sending your message. Please try again later.",
+                    variant: "destructive",
+                });
+            }
+        } catch {
+            toast({
+                title: "Error",
+                description: "There was a problem sending your message. Please try again later.",
+                variant: "destructive",
+            });
+        }
     }
 
     return (

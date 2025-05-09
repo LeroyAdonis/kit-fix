@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthState } from 'react-firebase-hooks/auth';
-import { doc, getDoc, collection, query, where, getDocs, deleteDoc, orderBy, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, deleteDoc, orderBy, Timestamp } from 'firebase/firestore';
 import { auth, db } from '@/firebaseConfig';
 import { logoutUser } from '@/services/authService'; // Assuming this exists
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ import { format } from 'date-fns';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
 import { toast } from 'sonner';
+import { onSnapshot } from 'firebase/firestore';
 import {
     Card,
     CardContent,
@@ -376,61 +377,65 @@ const Dashboard = () => {
     useEffect(() => {
         if (!user && !loadingAuth) {
             console.log("No user logged in, logging out.");
-            // logoutUser(); // Assuming this handles navigation
-            // If logoutUser doesn't navigate, add: navigate('/login');
         }
-    }, [user, loadingAuth, navigate]); // Added navigate to dependency array
+    }, [user, loadingAuth, navigate]);
 
     useEffect(() => {
+        let unsubscribe: (() => void) | undefined;
+
         const fetchData = async () => {
             if (user) {
                 setLoadingData(true);
                 try {
+                    // Fetch user data once
                     const userDocRef = doc(db, 'users', user.uid);
                     const userDocSnap = await getDoc(userDocRef);
                     if (userDocSnap.exists()) {
                         setUserData(userDocSnap.data() as UserData);
                     } else {
-                        console.warn("User document not found for UID:", user.uid);
                         setUserData(null);
-                        // Optionally force logout or profile completion flow here
                     }
 
+                    // Real-time listener for orders
                     const ordersCollectionRef = collection(db, 'orders');
                     const q = query(ordersCollectionRef, where('userId', '==', user.uid), orderBy('createdAt', 'desc'));
-                    const querySnapshot = await getDocs(q);
-                    const ordersList = querySnapshot.docs.map(d => {
-                        const data = d.data();
-                        // Ensure all nested objects exist with default values for safety
-                        return {
-                            id: d.id,
-                            ...data,
-                            contactInfo: data.contactInfo || {},
-                            processing: data.processing || {},
-                            payment: data.payment || {},
-                        };
-                    }) as Order[];
-                    setOrders(ordersList);
+                    unsubscribe = onSnapshot(q, (querySnapshot) => {
+                        const ordersList = querySnapshot.docs.map(d => {
+                            const data = d.data();
+                            return {
+                                id: d.id,
+                                ...data,
+                                contactInfo: data.contactInfo || {},
+                                processing: data.processing || {},
+                                payment: data.payment || {},
+                            };
+                        }) as Order[];
+                        setOrders(ordersList);
+                        setLoadingData(false);
+                    }, (error) => {
+                        console.error("Error fetching user orders in real-time:", error);
+                        setLoadingData(false);
+                    });
 
                 } catch (error) {
                     console.error("Error fetching user data or orders:", error);
-                    toast.error("Failed to load your orders.");
-                } finally {
                     setLoadingData(false);
                 }
             } else {
-                // Clear data if user logs out while component is mounted
                 setUserData(null);
                 setOrders([]);
                 setLoadingData(false);
             }
         };
 
-        // Fetch data only when user object changes or auth status changes after initial load
         if (user || !loadingAuth) {
             fetchData();
         }
 
+        // Cleanup on unmount
+        return () => {
+            if (unsubscribe) unsubscribe();
+        };
     }, [user, loadingAuth, db]); // Added loadingAuth to dependency array
 
     const cancelOrder = async (orderId: string) => {
@@ -629,7 +634,7 @@ const Dashboard = () => {
                                             </DialogTrigger>
 
                                             {/* Dialog Content */}
-                                            <DialogContent className="w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-xl overflow-y-auto max-h-[90vh] p-2 sm:p-4 md:p-8">
+                                            <DialogContent className="w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-xl overflow-y-auto max-h-[90vh] p-2 sm:p-4 md:p-8 scrollbar-hide">
                                                 <DialogHeader>
                                                     <DialogTitle className="text-2xl font-bold text-electric-blue">
                                                         Order #{`KF${order.id.slice(0, 6).toUpperCase()}`}
@@ -686,7 +691,14 @@ const Dashboard = () => {
                                                         {order.processing?.preferredDate && (
                                                             <div className="flex flex-wrap items-center gap-2">
                                                                 <CalendarDays className="h-4 w-4 text-purple-500 shrink-0" />
-                                                                <strong>Preferred Date:</strong> <span>{order.processing.preferredDate}</span>
+                                                                <strong>Preferred Date:</strong> <span>{order.processing.preferredDate
+                                                                    ? format(
+                                                                        typeof order.processing.preferredDate === "object" && "seconds" in order.processing.preferredDate
+                                                                            ? new Date((order.processing.preferredDate as Timestamp).seconds * 1000)
+                                                                            : new Date(order.processing.preferredDate),
+                                                                        "dd MMM yyyy HH:mm"
+                                                                    )
+                                                                    : "N/A"}</span>
                                                             </div>
                                                         )}
                                                         {order.processing?.actualCustomerDropoffDate?.seconds && (
@@ -793,7 +805,7 @@ const Dashboard = () => {
                                                             {order.processing?.status === 'pending' && (
                                                                 <Button
                                                                     variant="destructive"
-                                                                    className="w-full sm:w-auto"
+                                                                    className="w-full sm:w-auto btn-secondary"
                                                                     onClick={() => cancelOrder(order.id)}
                                                                     disabled={isCancellingId === order.id}
                                                                 >

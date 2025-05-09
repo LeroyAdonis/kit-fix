@@ -78,36 +78,28 @@ const CustomerReviews = () => {
 
   return (
     <section id="reviews" className="py-16 bg-pure-white relative">
-      {showArrows && (
-        <>
-          <a
-            onClick={() => scrollBy(-350)}
-            className="hidden lg:block absolute left-5 top-2/4 -translate-y-1/2 z-10 bg-transparent text-black rounded-full shadow p-2 hover:bg-gray-100 cursor-pointer"
-            aria-label="Scroll Left"
-          >
-            <ChevronLeft className="w-6 h-6" />
-          </a>
-          <a
-            onClick={() => scrollBy(350)}
-            className="hidden lg:block absolute right-5 top-2/4 -translate-y-1/2 z-10 bg-transparent text-black rounded-full shadow p-2 hover:bg-gray-100 cursor-pointer"
-            aria-label="Scroll Right"
-          >
-            <ChevronRight className="w-6 h-6" />
-          </a>
-        </>
-      )}
       <div className="container-custom relative">
         <h2 className="heading-lg text-center mb-4">Customer Reviews</h2>
         <p className="text-center text-gray-600 mb-12">What our customers say about us</p>
 
         {/* Carousel Controls */}
-        <div className="relative">
-
+        <div className="flex items-center">
+          {/* Left Arrow */}
+          {showArrows && (
+            <a
+              onClick={() => scrollBy(-350)}
+              className="hidden md:flex items-center justify-center mr-2 bg-transparent rounded-full shadow p-2 hover:bg-white hover:shadow-md transition-all ease-in-out duration-100 cursor-pointer"
+              aria-label="Scroll Left"
+              style={{ minWidth: 40, minHeight: 40 }}
+            >
+              <ChevronLeft className="w-6 h-6" />
+            </a>
+          )}
 
           {/* Horizontally scrollable reviews with snapping */}
           <div
             ref={scrollRef}
-            className="flex gap-8 overflow-x-auto scrollbar-hide py-4 px-2"
+            className="flex gap-4 overflow-x-auto scrollbar-hide py-4 px-2 flex-1"
             style={{ scrollSnapType: "x mandatory" }}
           >
             {loading ? (
@@ -118,7 +110,7 @@ const CustomerReviews = () => {
                 .map((review, index) => (
                   <div
                     key={review.id || index}
-                    className="min-w-[320px] max-w-xs flex-shrink-0 p-6 rounded-lg border border-gray-200 shadow-sm bg-white"
+                    className="min-w-[220px] sm:min-w-[320px] max-w-xs flex-shrink-0 p-6 rounded-lg border border-gray-200 shadow-sm bg-white"
                     style={{ scrollSnapAlign: "center" }}
                   >
                     <div className="flex items-center mb-4">
@@ -129,7 +121,7 @@ const CustomerReviews = () => {
                         <h4 className="font-bold">{review.name}</h4>
                         <div className="flex">
                           {[...Array(review.rating)].map((_, i) => (
-                            <Star key={i} className="w-4 h-4 fill-fiery-red text-fiery-red" />
+                            <Star key={i} className="w-4 h-4 fill-amber-300 stroke-amber-300 text-fiery-red" />
                           ))}
                         </div>
                       </div>
@@ -139,9 +131,21 @@ const CustomerReviews = () => {
                 ))
             )}
           </div>
+
+          {/* Right Arrow */}
+          {showArrows && (
+            <a
+              onClick={() => scrollBy(350)}
+              className="hidden md:flex items-center justify-center ml-2 bg-transparent rounded-full shadow p-2 hover:bg-white hover:shadow-md transition-all ease-in-out duration-100 cursor-pointer"
+              aria-label="Scroll Right"
+              style={{ minWidth: 40, minHeight: 40 }}
+            >
+              <ChevronRight className="w-6 h-6" />
+            </a>
+          )}
         </div>
 
-        {/* Floating Add Review Button */}
+        {/* Write a Review Button */}
         <div className="flex justify-center mt-4">
           <a
             onClick={() => setShowModal(true)}
@@ -185,7 +189,7 @@ const CustomerReviews = () => {
                     className="focus:outline-none"
                   >
                     <Star
-                      className={`w-5 h-5 ${form.rating >= star ? "fill-fiery-red text-fiery-red" : "text-gray-300"}`}
+                      className={`w-5 h-5 ${form.rating >= star ? "fill-amber-300 stroke-amber-300 text-fiery-red" : "text-gray-300"}`}
                     />
                   </button>
                 ))}

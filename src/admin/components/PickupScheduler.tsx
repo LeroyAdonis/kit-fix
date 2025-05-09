@@ -424,7 +424,14 @@ const PickupScheduler: React.FC = () => {
                                         {order.processing?.preferredDate && (
                                             <p className="text-gray-700">
                                                 <CalendarDays className="inline mr-1 h-4 w-4 text-purple-500" />
-                                                <strong>Preferred Date:</strong> {order.processing.preferredDate}
+                                                <strong>Preferred Date:</strong> {order.processing.preferredDate
+                                                    ? format(
+                                                        typeof order.processing.preferredDate === "object" && "seconds" in order.processing.preferredDate
+                                                            ? new Date((order.processing.preferredDate as Timestamp).seconds * 1000)
+                                                            : new Date(order.processing.preferredDate),
+                                                        "dd MMM yyyy HH:mm"
+                                                    )
+                                                    : "N/A"}
                                             </p>
                                         )}
                                         {order.processing?.scheduledInitialPickupDate?.seconds && (

@@ -3,7 +3,7 @@
 // src/contexts/AuthContext.tsx
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { onAuthStateChanged, User } from "firebase/auth";
+import { onAuthStateChanged, User, setPersistence, browserSessionPersistence } from "firebase/auth"; // <-- import these
 import { auth } from "@/firebaseConfig";
 import { logoutUser } from "@/services/authService";
 import {
@@ -49,6 +49,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const [isInactive, setIsInactive] = useState(false);
     const [dialogOpen, setDialogOpen] = useState(false);
     const [logoutCountdown, setLogoutCountdown] = useState(30);
+
+    useEffect(() => {
+        setPersistence(auth, browserSessionPersistence);
+    }, []);
 
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {

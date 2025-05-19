@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import OrdersTable from "./components/OrdersTable";
 import RepairManager from "./components/RepairManager";

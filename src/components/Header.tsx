@@ -6,7 +6,6 @@ import { auth } from "@/firebaseConfig";
 import { logoutUser } from "../services/authService";
 import { isAdmin } from "../contexts/AuthContext";
 
-
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -14,7 +13,6 @@ const Header = () => {
   const [user] = useAuthState(auth);
   const location = useLocation();
   const navigate = useNavigate();
-
 
   const logout = async () => {
     await logoutUser();
@@ -52,20 +50,17 @@ const Header = () => {
     }
   }, [location.pathname, location.hash]);
 
-  // Helper to handle anchor navigation for section links
   const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, path: string) => {
     if (path.startsWith('/#')) {
       e.preventDefault();
       const hash = path.split('#')[1];
       if (location.pathname !== '/') {
         navigate(`/${path.includes('#') ? '#' + hash : ''}`);
-        // Scroll will be handled by Index.tsx useEffect on mount
       } else {
         const el = document.getElementById(hash);
         if (el) {
           el.scrollIntoView({ behavior: 'smooth' });
         } else {
-          // fallback: update hash, Index.tsx will handle
           window.location.hash = hash;
         }
       }
@@ -75,13 +70,15 @@ const Header = () => {
 
   const navItems = [
     { name: 'Home', path: '/' },
-    { name: 'Services', path: '/#services' },
-    { name: 'How It Works', path: '/#how-it-works' },
-    { name: 'Reviews', path: '/#reviews' },
-    { name: 'Contact', path: '/#contact' },
+    { name: 'Services', path: '#services' },
+    { name: 'How It Works', path: '#how-it-works' },
+    { name: 'Reviews', path: '#reviews' },
+    { name: 'Contact', path: '#contact' },
   ];
 
-  const isActive = (path: string) => location.pathname + location.hash === path || activeSection === path;
+  const isActive = (path: string) =>
+    path === '/' ? location.pathname === '/' && location.hash === '' :
+      location.hash === path || activeSection === path;
 
   return (
     <header className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${scrolled ? 'py-2 bg-pure-white shadow-md' : 'py-4 bg-pure-white'}`}>
@@ -96,9 +93,9 @@ const Header = () => {
             <a
               key={item.name}
               href={item.path}
-              className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive(item.path) ? 'text-electric-blue font-semibold' : 'text-jet-black'
-                }`}
+              className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive(item.path) ? 'text-electric-blue font-semibold' : 'text-jet-black'}`}
               onClick={item.path.startsWith('/#') ? (e) => handleNavClick(e, item.path) : undefined}
+              onMouseDown={(e) => e.preventDefault()}
             >
               {item.name}
             </a>
@@ -119,16 +116,6 @@ const Header = () => {
             </Link>
           )}
 
-          {/* {auth.currentUser && isAdmin(auth.currentUser) && (
-            <Link to="/admin" className="nav-link">
-              Admin Dashboard
-            </Link>
-          )} : {auth.currentUser && !isAdmin(auth.currentUser) && (
-            <Link to="/dashboard" className="nav-link">
-              Dashboard
-            </Link>
-          )} */}
-
           <button
             type="button"
             onClick={() => navigate('/upload-photos')}
@@ -136,8 +123,6 @@ const Header = () => {
           >
             Start Repair
           </button>
-
-
         </nav>
 
         <button className="md:hidden text-jet-black" onClick={() => setIsMenuOpen(!isMenuOpen)}>
@@ -151,23 +136,22 @@ const Header = () => {
                 <a
                   key={item.name}
                   href={item.path}
-                  className={`font-medium hover:text-electric-blue transition-colors duration-300 py-2 ${isActive(item.path) ? 'text-electric-blue font-semibold' : 'text-jet-black'
-                    }`}
+                  className={`font-medium hover:text-electric-blue transition-colors duration-300 py-2 ${isActive(item.path) ? 'text-electric-blue font-semibold' : 'text-jet-black'}`}
                   onClick={item.path.startsWith('/#') ? (e) => handleNavClick(e, item.path) : () => setIsMenuOpen(false)}
                 >
                   {item.name}
                 </a>
               ))}
               {auth.currentUser && !isAdmin(auth.currentUser) ? (
-                <Link to="/dashboard" className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive('/dashboard') ? 'text-electric-blue font-semibold' : 'text-jet-black'}`}>
+                <Link to="/dashboard" onClick={() => setIsMenuOpen(false)} className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive('/dashboard') ? 'text-electric-blue font-semibold' : 'text-jet-black'}`}>
                   Dashboard
                 </Link>
               ) : auth.currentUser && isAdmin(auth.currentUser) ? (
-                <Link to="/admin" className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive('/admin') ? 'text-electric-blue font-semibold' : 'text-jet-black'}`}>
-                  Admin Dashboardd
+                <Link to="/admin" onClick={() => setIsMenuOpen(false)} className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive('/admin') ? 'text-electric-blue font-semibold' : 'text-jet-black'}`}>
+                  Admin Dashboard
                 </Link>
               ) : (
-                <Link to="/login" className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive('/login') ? 'text-electric-blue font-semibold' : 'text-jet-black'}`}>
+                <Link to="/login" onClick={() => setIsMenuOpen(false)} className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive('/login') ? 'text-electric-blue font-semibold' : 'text-jet-black'}`}>
                   Login
                 </Link>
               )}

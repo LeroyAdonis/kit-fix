@@ -139,12 +139,6 @@ const UploadPhotos = () => {
             return;
         }
 
-        if (!user) {
-            toast.error("You must be logged in to create an order.");
-            // Optionally redirect to login
-            // navigate('/login');
-            return;
-        }
 
         setUploading(true); // Start uploading state
         setUploadProgress(0); // Reset progress
@@ -154,7 +148,8 @@ const UploadPhotos = () => {
             const downloadURLs = await Promise.all(
                 photos.map(photo => {
                     // Create a storage reference with a unique name including user ID and timestamp
-                    const uniqueName = `${user.uid}_${Date.now()}_${photo.name.replace(/\s+/g, '_')}`; // Replace spaces
+                    const userIdForName = user ? user.uid : "guest";
+                    const uniqueName = `${userIdForName}_${Date.now()}_${photo.name.replace(/\s+/g, '_')}`;
                     const storageRef = ref(storage, `jerseys/${uniqueName}`);
                     const uploadTask = uploadBytesResumable(storageRef, photo);
 
@@ -203,51 +198,47 @@ const UploadPhotos = () => {
             console.log("Creating initial order document in Firestore...");
 
             // --- Create the initial order document aligning with the Order type ---
-            const newOrder: Omit<Order, 'id'> = { // Omit 'id' as addDoc generates it
-                userId: user.uid, // User ID from auth state
-
-                contactInfo: { // Initialize contact info - will be filled later
+            const newOrder: Omit<Order, 'id'> = {
+                userId: user ? user.uid : "", // Use empty string for anonymous users
+                contactInfo: {
                     name: "",
-                    email: user.email || "", // Pre-fill email if available
+                    email: user?.email || "",
                     phone: "",
                     address: "",
                 },
-
-                repairType: "", // Will be set in GetQuote
-                repairDescription: "", // Will be set in GetQuote
-                price: 0, // Will be set in GetQuote
-                notes: "", // Will be set in GetQuote
-
-                photos: downloadURLs, // Save all download URLs here
-
-                processing: { // Initialize processing fields
-                    status: "pending" as OrderStatus, // <-- Initial status for OrdersTable
-                    repairStatus: "Pending Routing" as RepairStatus, // <-- Initial status before admin routes
+                // ...other fields unchanged...
+                photos: downloadURLs,
+                processing: {
+                    status: "pending" as OrderStatus,
+                    repairStatus: "Pending Routing" as RepairStatus,
                 } as ProcessingInfo,
-
-                payment: { // Initialize payment fields
-                    amount: 0, // Set price in GetQuote
-                    status: "unpaid" as PaymentStatus, // Initially unpaid
+                payment: {
+                    amount: 0,
+                    status: "unpaid" as PaymentStatus,
                     method: "",
                     reference: "",
                     paidAt: Timestamp.fromDate(new Date()),
                 },
-
-                // Remove redundant top-level status and paid fields
-
-                createdAt: serverTimestamp(), // Set creation timestamp
-                updatedAt: serverTimestamp(), // Set initial update timestamp
-
-                // Remove history object for now if not strictly needed in this structure
-                // history: {} // Remove if not used or structure differently
+                repairType: "", // Added missing repairType property
+                price: 0,       // Added missing price property
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
             };
 
             // Use addDoc to create the document with an auto-generated ID
             const orderRef = await addDoc(collection(db, "orders"), newOrder);
 
-            console.log("Order document created with ID:", orderRef.id);
+            // Store order ID and photos in localStorage for guest/user
+            if (user) {
+                localStorage.setItem(`kitfix-${user.uid}-order-id`, orderRef.id);
+                localStorage.setItem(`kitfix-${user.uid}-quote-photos`, JSON.stringify(downloadURLs));
+            } else {
+                localStorage.setItem('kitfix-guest-order-id', orderRef.id);
+                localStorage.setItem('kitfix-guest-quote-photos', JSON.stringify(downloadURLs));
+            }
 
             toast.success("Photos uploaded and initial order created!");
+
 
             // Clean up local preview URLs
             previews.forEach(preview => URL.revokeObjectURL(preview));

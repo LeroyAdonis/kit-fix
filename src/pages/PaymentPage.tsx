@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable react-hooks/exhaustive-deps */
-import { updateDoc, doc, Timestamp, serverTimestamp, getDoc, deleteDoc } from 'firebase/firestore';
+import { updateDoc, Timestamp, serverTimestamp, getDoc, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '@/firebaseConfig';
 import { toast } from 'sonner'; // Use sonner
 
@@ -14,14 +14,172 @@ import Footer from '@/components/Footer';
 import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
 import Header from '@/components/Header';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { loginUser } from '../services/authService';
+import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
+import { z } from 'zod';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { Input } from '@/components/ui/input';
+import {
+    Form,
+    FormField,
+    FormItem,
+    FormLabel,
+    FormControl,
+    FormMessage
+} from '@/components/ui/form';
 
+const loginSchema = z.object({
+    email: z.string().email({ message: 'Please enter a valid email address.' }),
+    password: z.string().min(6, { message: 'Password must be at least 6 characters.' })
+});
+
+function EmbeddedLoginForm({ onSuccess }: { onSuccess: () => void }) {
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState('');
+    const form = useForm({
+        resolver: zodResolver(loginSchema),
+        defaultValues: { email: '', password: '' },
+    });
+    const onSubmit = async (data: any) => {
+        setIsLoading(true);
+        setError('');
+        try {
+            await loginUser(data.email, data.password);
+            onSuccess();
+        } catch (err: any) {
+            let errorMessage = 'Login failed. Please try again.';
+            if (err.code === 'auth/invalid-credential') {
+                errorMessage = 'Invalid credentials. Please check your email and password.';
+            }
+            setError(errorMessage);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+    return (
+        <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                {error && <p className="text-red-600 text-sm mb-2">{error}</p>}
+                <FormField control={form.control} name="email" render={({ field }: { field: any }) => (
+                    <FormItem>
+                        <FormLabel>Email</FormLabel>
+                        <FormControl>
+                            <Input placeholder="your@email.com" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                    </FormItem>
+                )} />
+                <FormField control={form.control} name="password" render={({ field }: { field: any }) => (
+                    <FormItem>
+                        <FormLabel>Password</FormLabel>
+                        <FormControl>
+                            <Input type="password" placeholder="******" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                    </FormItem>
+                )} />
+                <Button type="submit" className="w-full" disabled={isLoading}>
+                    {isLoading ? 'Logging in...' : 'Login'}
+                </Button>
+            </form>
+        </Form>
+    );
+}
+
+const registerSchema = z.object({
+    name: z.string().min(2, { message: 'Name must be at least 2 characters.' }),
+    email: z.string().email({ message: 'Please enter a valid email address.' }),
+    password: z.string().min(6, { message: 'Password must be at least 6 characters.' }),
+    confirmPassword: z.string().min(6, { message: 'Password must be at least 6 characters.' }),
+}).refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords don't match",
+    path: ["confirmPassword"],
+});
+
+function EmbeddedRegisterForm({ onSuccess }: { onSuccess: () => void }) {
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState('');
+    const form = useForm({
+        resolver: zodResolver(registerSchema),
+        defaultValues: { name: '', email: '', password: '', confirmPassword: '' },
+    });
+    const onSubmit = async (data: any) => {
+        setIsLoading(true);
+        setError('');
+        try {
+            const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
+            const user = userCredential.user;
+            await updateProfile(user, { displayName: data.name });
+            await setDoc(doc(db, 'users', user.uid), {
+                uid: user.uid,
+                name: data.name,
+                email: data.email,
+                phone: '',
+                orderHistory: [],
+                paymentStatus: '',
+                deliveryAddress: '',
+                jerseyImages: [],
+            });
+            onSuccess();
+        } catch (err: any) {
+            setError(err.message || 'Registration failed. Please try again.');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+    return (
+        <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                {error && <p className="text-red-600 text-sm mb-2">{error}</p>}
+                <FormField control={form.control} name="name" render={({ field }: { field: any }) => (
+                    <FormItem>
+                        <FormLabel>Full Name</FormLabel>
+                        <FormControl>
+                            <Input placeholder="John Doe" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                    </FormItem>
+                )} />
+                <FormField control={form.control} name="email" render={({ field }: { field: any }) => (
+                    <FormItem>
+                        <FormLabel>Email</FormLabel>
+                        <FormControl>
+                            <Input placeholder="your@email.com" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                    </FormItem>
+                )} />
+                <FormField control={form.control} name="password" render={({ field }: { field: any }) => (
+                    <FormItem>
+                        <FormLabel>Password</FormLabel>
+                        <FormControl>
+                            <Input type="password" placeholder="******" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                    </FormItem>
+                )} />
+                <FormField control={form.control} name="confirmPassword" render={({ field }: { field: any }) => (
+                    <FormItem>
+                        <FormLabel>Confirm Password</FormLabel>
+                        <FormControl>
+                            <Input type="password" placeholder="******" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                    </FormItem>
+                )} />
+                <Button type="submit" className="w-full" disabled={isLoading}>
+                    {isLoading ? 'Creating Account...' : 'Register'}
+                </Button>
+            </form>
+        </Form>
+    );
+}
 
 const PaymentPage = () => {
-    // Replace useToast with sonner toast
-    // const { toast } = useToast(); // REMOVE THIS LINE
-
     const publicKey = 'pk_test_47613641c497d46502f6efadf29ef3c821f7b459'; // Use environment variables!
 
     const [searchParams] = useSearchParams();
@@ -29,6 +187,9 @@ const PaymentPage = () => {
 
     const [user] = useAuthState(auth);
     const [isLoading, setIsLoading] = useState(false); // Loading for Paystack initiation/payment process
+    const [showAuthModal, setShowAuthModal] = useState(false); // Modal state
+    const [authTab, setAuthTab] = useState<'login' | 'register'>('login'); // Tab state
+    const paymentPendingRef = useRef(false); // Track if payment should be triggered after login
 
     // State to hold the consolidated order data for display and payment
     // This state should ideally mirror the Firestore document structure as much as possible
@@ -37,7 +198,6 @@ const PaymentPage = () => {
     const [pageLoading, setPageLoading] = useState(true); // Loading for initial data fetch
     const [, setIsCancellingId] = useState<string | null>(null);
     const [orders, setOrders] = useState<Order[]>([]);
-
 
     // Effect to fetch and consolidate order data for display
     useEffect(() => {
@@ -101,6 +261,20 @@ const PaymentPage = () => {
         // Depend on db as well, though unlikely to change
     }, [searchParams, navigate, db]);
 
+    // Effect: If modal is open and user logs in, close modal and trigger payment
+    useEffect(() => {
+        if (showAuthModal && user) {
+            setShowAuthModal(false);
+            if (!paymentPendingRef.current) {
+                paymentPendingRef.current = true;
+                setTimeout(() => {
+                    handlePaystack();
+                    paymentPendingRef.current = false;
+                }, 300);
+            }
+        }
+    }, [showAuthModal, user]);
+
     const cancelOrder = async (orderId: string | null) => {
         const orderIdFromParams = searchParams.get("orderId");
         if (!finalOrderData) {
@@ -122,20 +296,6 @@ const PaymentPage = () => {
         if (window.confirm('Are you sure you want to cancel this order? This action cannot be undone.')) {
             setIsCancellingId(orderIdFromParams);
             try {
-                // Option 1: Update status to 'cancelled' (Recommended for history)
-                // Need serverTimestamp() from Firestore for this
-                // import { serverTimestamp } from 'firebase/firestore';
-                // await updateDoc(doc(db, 'orders', orderId), {
-                //     'processing.status': 'cancelled' as OrderStatus,
-                //     updatedAt: serverTimestamp() // Use server timestamp
-                // });
-                // // Optimistically update state
-                // setOrders(orders.map(o => o.id === orderId ?
-                //     { ...o, processing: { ...(o.processing as ProcessingInfo), status: 'cancelled' as OrderStatus }, updatedAt: new Date() } // Client date for immediate display
-                //     : o
-                // ));
-
-                // Option 2: Delete the document (Your current implementation)
                 if (orderId) {
                     await deleteDoc(doc(db, 'orders', orderId));
                 } else {
@@ -143,7 +303,6 @@ const PaymentPage = () => {
                     toast.error("Failed to cancel the order. Order ID is missing.");
                 }
                 setOrders(orders.filter(order => order.id !== orderId));
-
 
                 if (orderId) {
                     toast.success(`Order ${orderId.slice(0, 6).toUpperCase()} cancelled successfully!`);
@@ -160,186 +319,130 @@ const PaymentPage = () => {
         }
     };
 
-
-    // Function called by Paystack on successful payment
     const handlePaymentSuccess = async (reference: string) => {
-        // setIsLoading(true); // Loading is already true from handlePaystack
-
         if (!user) {
             toast.error("User not authenticated.");
-            // setIsLoading(false); // Ensure loading is off on error
             return;
         }
         if (!finalOrderId) {
             toast.error("Order ID missing after payment.");
-            // setIsLoading(false); // Ensure loading is off on error
             return;
         }
-        // Use existingData for the update, as it's the most recent state from Firestore
-        // finalOrderData is for display, but might be slightly older if updates happen elsewhere.
-        // However, since this is a critical update, let's re-fetch one last time for safety or rely on existingOrderData from Paystack call
-        // Let's rely on the existingData fetched right before the Paystack call in handlePaystack
-        // We need existingData here, but it's only available in handlePaystack's try block.
-        // A more robust pattern passes necessary data to handlePaymentSuccess.
-        // For now, let's assume finalOrderData is sufficiently up-to-date OR re-fetch.
-        // Re-fetching is safer but adds latency. Using finalOrderData might be acceptable post-payment if the only change is payment status.
-        // Let's use finalOrderData as it's the current state the user sees.
 
         if (!finalOrderData) {
             toast.error("Order data missing for payment success update.");
-            // setIsLoading(false); // Ensure loading is off on error
-            navigate("/dashboard"); // Or handle error state
+            navigate("/dashboard");
             return;
         }
-
 
         try {
             const orderRef = doc(db, "orders", finalOrderId);
 
-            // Fetch existing data just to be absolutely sure (optional but robust)
-            // const orderSnap = await getDoc(orderRef);
-            // const existingOrderData = orderSnap.exists() ? orderSnap.data() as Order : null;
-            // if (!existingOrderData) { ... handle error ... }
-            // const sourceData = existingOrderData || finalOrderData; // Use fetched data if available
-
-
-            // Only update payment and potentially the customer-facing top-level status.
-            // Do NOT change processing.status or repairStatus here.
-            // ContactInfo.address should be saved in ScheduleService.
-
             const updates: Partial<Order> = {
                 payment: {
-                    // Use data from finalOrderData state for amount, but merge with potential existing payment info
-                    ...(finalOrderData.payment || {}), // Use finalOrderData's payment object as base
-                    amount: finalOrderData.price, // Use price saved from quote (from finalOrderData)
+                    ...(finalOrderData.payment || {}),
+                    amount: finalOrderData.price,
                     reference: reference,
                     status: "paid" as PaymentStatus,
-                    method: "Paystack", // Or get dynamically
+                    method: "Paystack",
                     paidAt: Timestamp.now(),
                 },
-                // Keep other fields as they are in finalOrderData state.
-                // Do NOT touch processing.status or repairStatus here.
-
-                updatedAt: serverTimestamp(), // Always update timestamp
+                updatedAt: serverTimestamp(),
             };
 
-            // Perform the update
             await updateDoc(orderRef, updates);
-
 
             toast.success("Payment successful!", { description: "Your order has been placed." });
 
-            // Clean up localStorage items related to the order process flow on successful payment
             localStorage.removeItem('kitfix-order');
-            localStorage.removeItem('orderId'); // Assuming this stores finalOrderId
+            localStorage.removeItem('orderId');
             localStorage.removeItem('kitfix-quote-photos');
             localStorage.removeItem('kitfix-quote-repairType');
             localStorage.removeItem('kitfix-quote-notes');
             localStorage.removeItem('kitfix-schedule-data');
 
-
-            navigate(`/confirmation/${finalOrderId}`); // Navigate to confirmation page
+            navigate(`/confirmation/${finalOrderId}`);
 
         } catch (error) {
             console.error("Error saving order after payment:", error);
             toast.error("Something went wrong", { description: "We couldn't update your order status after payment." });
-            // Important: If the database update fails but payment succeeded, you have a discrepancy!
-            // You need a way to reconcile this (e.g., webhook from Paystack, manual check, retry mechanism).
-            // For now, log the error and show a user message.
         } finally {
-            setIsLoading(false); // Ensure loading is off after DB update attempt
+            setIsLoading(false);
         }
     };
 
-    // Function to initiate Paystack payment
     const handlePaystack = async () => {
         if (!user) {
-            toast.error("You must be logged in to pay.");
+            setShowAuthModal(true); // Show login/register modal
             return;
         }
-        // Ensure we have final order data for display, but use fresh data for Paystack metadata
         if (!finalOrderData || !finalOrderId) {
             toast.error("Order data is missing. Please refresh the page.");
             return;
         }
-        // Ensure payment status is not already paid
         if (finalOrderData.payment?.status === 'paid') {
             toast.info("This order is already paid.");
             navigate(`/confirmation/${finalOrderId}`);
             return;
         }
-        // Ensure price is valid
         if (!finalOrderData.price || finalOrderData.price <= 0) {
             toast.error("Cannot process payment for invalid amount.");
             console.error("Invalid order price:", finalOrderData.price);
             return;
         }
-        // Ensure initialMethod and fulfillmentMethod are set
         if (!finalOrderData.processing?.initialMethod || !finalOrderData.processing?.fulfillmentMethod) {
             toast.error("Order is missing initial or fulfillment method. Please go back to scheduling.");
-            // Navigate back to schedule service
             navigate(`/schedule-service?orderId=${finalOrderId}`);
             return;
         }
 
-
-        setIsLoading(true); // Start loading for Paystack initiation
+        setIsLoading(true);
 
         try {
             const orderId = finalOrderId;
-            const orderRef = doc(db, "orders", orderId); // Assume order always exists at this point (created in UploadPhotos)
+            const orderRef = doc(db, "orders", orderId);
 
-            // Fetch existing data to get the most accurate and complete order document
             const existingSnap = await getDoc(orderRef);
             const existingData = existingSnap.exists() ? existingSnap.data() as Order : null;
 
             if (!existingData) {
                 toast.error("Critical error: Order not found before payment initiation.");
                 setIsLoading(false);
-                navigate("/dashboard"); // Redirect to a safe page
+                navigate("/dashboard");
                 return;
             }
 
-            // Update the existing order document just before initiating Paystack
-            // Primary update: set payment status to "unpaid" (in case user restarts payment)
-            // Also update the stepCompleted field.
             const updates: Partial<Order> = {
                 payment: {
-                    ...(existingData.payment || {}), // Start with existing payment info
-                    amount: existingData.price, // Use price from Firestore (most reliable)
-                    status: "unpaid" as PaymentStatus, // Set status to unpaid before initiating payment
-                    // method, reference, paidAt will be set in handlePaymentSuccess
+                    ...(existingData.payment || {}),
+                    amount: existingData.price,
+                    status: "unpaid" as PaymentStatus,
                 },
-                stepCompleted: 'payment_initiated', // Indicate payment process started
-                updatedAt: serverTimestamp(), // Update timestamp
+                stepCompleted: 'payment_initiated',
+                updatedAt: serverTimestamp(),
             };
 
-            // Perform the update
             await updateDoc(orderRef, updates);
 
-            // Initiate Paystack using the orderId and data from existingData (most reliable)
             const paystack = (window as any).PaystackPop.setup({
-                key: publicKey, // Use environment variable
-                email: existingData.contactInfo?.email || existingData.userId, // Use email from fetched data or user ID
-                amount: (existingData.price || 0) * 100, // Use price from fetched data (in kobo/cents)
+                key: publicKey,
+                email: existingData.contactInfo?.email || existingData.userId,
+                amount: (existingData.price || 0) * 100,
                 currency: "ZAR",
                 metadata: {
-                    orderId: orderId, // Pass orderId in metadata
-                    // Pass other details for context from fetched data (existingData is reliable)
+                    orderId: orderId,
                     name: existingData.contactInfo?.name,
                     phone: existingData.contactInfo?.phone,
                     email: existingData.contactInfo?.email,
-                    // Use the methods from the fetched data
                     initialMethod: existingData.processing?.initialMethod,
                     fulfillmentMethod: existingData.processing?.fulfillmentMethod,
                     repairType: existingData.repairType,
                     price: existingData.price,
-                    // Add addresses/locations to metadata if useful
-                    customerAddress: existingData.contactInfo?.address, // Customer's main address
-                    dropoffLocation: existingData.processing?.customerDropoffLocation, // Store dropoff address
-                    initialPickupLocation: existingData.processing?.initialPickupLocation, // KitFix pickup address from customer
-                    customerPickupLocation: existingData.processing?.customerPickupLocation, // Customer pickup address from store
-                    kitFixDeliveryAddress: existingData.processing?.kitFixDeliveryAddress, // KitFix delivery address to customer
+                    customerAddress: existingData.contactInfo?.address,
+                    dropoffLocation: existingData.processing?.customerDropoffLocation,
+                    initialPickupLocation: existingData.processing?.initialPickupLocation,
+                    customerPickupLocation: existingData.processing?.customerPickupLocation,
+                    kitFixDeliveryAddress: existingData.processing?.kitFixDeliveryAddress,
                 },
                 callback: (response: any) => {
                     console.log("Paystack callback received:", response);
@@ -353,7 +456,6 @@ const PaymentPage = () => {
 
             paystack.openIframe();
 
-
         } catch (error) {
             console.error("Error initiating payment or updating order status to unpaid:", error);
             toast.error("Payment Failed", { description: "Could not initiate payment. Please check console." });
@@ -361,11 +463,6 @@ const PaymentPage = () => {
         }
     };
 
-    // No form fields to handle changes for in this view if it's just review
-    // const handleInputChange = (field: string, value: any) => { ... }; // REMOVE IF NOT USED
-
-
-    // Show page loading state
     if (pageLoading) {
         return (
             <div className="min-h-screen flex items-center justify-center">
@@ -374,7 +471,6 @@ const PaymentPage = () => {
         );
     }
 
-    // Render nothing or an error message if finalOrderData is null after loading
     if (!finalOrderData) {
         return (
             <div className="min-h-screen flex items-center justify-center">
@@ -382,7 +478,6 @@ const PaymentPage = () => {
             </div>
         );
     }
-
 
     return (
         <div className="min-h-screen flex flex-col">
@@ -396,11 +491,7 @@ const PaymentPage = () => {
                         </CardHeader>
                         <Separator />
                         <CardContent className="pt-6 space-y-6">
-                            {/* Remove FormProvider and Form if not using react-hook-form components */}
-                            {/* <FormProvider {...methods}> */}
-                            {/* <Form {...methods}> */}
-                            <div className="grid grid-cols-1 gap-4 text-gray-700"> {/* Adjusted gap and added text color */}
-                                {/* Display Fields - Read Only */}
+                            <div className="grid grid-cols-1 gap-4 text-gray-700">
                                 <div>
                                     <strong>Order #:</strong> {finalOrderId ? finalOrderId.slice(0, 6).toUpperCase() : 'N/A'}
                                 </div>
@@ -413,25 +504,13 @@ const PaymentPage = () => {
                                 <div>
                                     <strong>Phone:</strong> {finalOrderData.contactInfo?.phone || 'N/A'}
                                 </div>
-
-                                {/* Display address if it exists in contactInfo */}
-                                {/* Show contactInfo.address as the primary address */}
                                 {finalOrderData.contactInfo?.address && (
                                     <div>
                                         <strong>Address:</strong> {finalOrderData.contactInfo.address}
                                     </div>
                                 )}
-                                {/* kitFixDeliveryAddress might be redundant now if address is always contactInfo.address for delivery fulfillment */}
-                                {/* If it serves a different purpose (e.g., verified delivery address), keep it */}
-                                {/* {finalOrderData.processing?.kitFixDeliveryAddress && (
-                                    <div>
-                                        <strong>Delivery Address:</strong> {finalOrderData.processing.kitFixDeliveryAddress}
-                                    </div>
-                                )} */}
-
-
                                 <div>
-                                    <strong>Repair Type:</strong> {finalOrderData.repairDescription || finalOrderData.repairType || 'N/A'} {/* Show description if available */}
+                                    <strong>Repair Type:</strong> {finalOrderData.repairDescription || finalOrderData.repairType || 'N/A'}
                                 </div>
                                 <div>
                                     <strong>Processing Time:</strong> {finalOrderData.processing?.duration || 'N/A'}
@@ -441,8 +520,6 @@ const PaymentPage = () => {
                                         <strong>Additional Notes:</strong> {finalOrderData.notes}
                                     </div>
                                 )}
-
-                                {/* Display Initial and Fulfillment Methods */}
                                 {finalOrderData.processing?.initialMethod && (
                                     <div>
                                         <strong>Initial Method:</strong>{" "}
@@ -455,35 +532,23 @@ const PaymentPage = () => {
                                         {finalOrderData.processing.fulfillmentMethod.charAt(0).toUpperCase() + finalOrderData.processing.fulfillmentMethod.slice(1)}
                                     </div>
                                 )}
-
-
-                                {/* Display Preferred Date */}
                                 {finalOrderData.processing?.preferredDate && (
                                     <div>
                                         <strong>Preferred Date:</strong> {finalOrderData.processing.preferredDate}
                                     </div>
                                 )}
                             </div>
-                            {/* </Form> */}
-                            {/* </FormProvider> */}
-
-                            <Separator className="my-4" /> {/* Add separator before total */}
-
-                            {/* Display Total */}
-                            <div className="flex justify-between items-center font-bold text-xl"> {/* Made total larger/bolder */}
+                            <Separator className="my-4" />
+                            <div className="flex justify-between items-center font-bold text-xl">
                                 <span>Total Amount:</span>
-                                <span className="text-electric-blue">R{finalOrderData.price?.toFixed(2) || '0.00'}</span> {/* Ensure price is displayed */}
+                                <span className="text-electric-blue">R{finalOrderData.price?.toFixed(2) || '0.00'}</span>
                             </div>
-
-
                             <Button className="w-full mt-6" onClick={handlePaystack} disabled={isLoading || pageLoading}>
                                 {isLoading ? (
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                 ) : null}
-                                Pay Now (R{finalOrderData.price?.toFixed(2) || '0.00'}) {/* Show price on button */}
+                                Pay Now (R{finalOrderData.price?.toFixed(2) || '0.00'})
                             </Button>
-
-                            {/* Add a Back button */}
                             <Button
                                 className="w-full"
                                 variant="outline"
@@ -492,7 +557,6 @@ const PaymentPage = () => {
                             >
                                 Back to Schedule
                             </Button>
-                            {/* Add a Cancel button */}
                             {finalOrderData?.processing?.status === 'pending' && (
                                 <Button className="w-full" variant="outline" onClick={() => cancelOrder(finalOrderId!)} disabled={isLoading || pageLoading}>
                                     Cancel
@@ -501,6 +565,44 @@ const PaymentPage = () => {
                         </CardContent>
                     </Card>
                 </div>
+                {/* Login/Register Modal */}
+                {showAuthModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+                        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full relative">
+                            <button
+                                className="absolute top-2 right-2 text-gray-400 hover:text-gray-600"
+                                onClick={() => setShowAuthModal(false)}
+                                aria-label="Close"
+                            >
+                                ×
+                            </button>
+                            <div className="flex justify-center mb-6">
+                                <button
+                                    className={`px-4 py-2 font-semibold rounded-l ${authTab === 'login' ? 'bg-electric-blue text-white' : 'bg-gray-100 text-gray-700'}`}
+                                    onClick={() => setAuthTab('login')}
+                                >
+                                    Login
+                                </button>
+                                <button
+                                    className={`px-4 py-2 font-semibold rounded-r ${authTab === 'register' ? 'bg-electric-blue text-white' : 'bg-gray-100 text-gray-700'}`}
+                                    onClick={() => setAuthTab('register')}
+                                >
+                                    Register
+                                </button>
+                            </div>
+                            <div>
+                                {authTab === 'login' ? (
+                                    <EmbeddedLoginForm onSuccess={() => setShowAuthModal(false)} />
+                                ) : (
+                                    <EmbeddedRegisterForm onSuccess={() => setShowAuthModal(false)} />
+                                )}
+                                <div className="mt-4 text-center text-gray-500 text-sm">
+                                    After logging in or registering, your payment will continue automatically.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </main>
             <Footer />
         </div>

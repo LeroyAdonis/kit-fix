@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -17,7 +18,9 @@ import { Input } from "@/components/ui/input";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import { collection, doc, getDoc, getDocs, query, where } from "firebase/firestore";
-import { db } from "@/firebaseConfig";
+import { auth, db } from "@/firebaseConfig";
+import { isAdmin } from "../contexts/AuthContext";
+
 
 const formSchema = z.object({
   email: z.string().email({ message: "Please enter a valid email address." }),
@@ -55,7 +58,11 @@ const Login = () => {
         const ordersData = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
         localStorage.setItem(`kitfix-orders-${user.uid}`, JSON.stringify(ordersData));
 
-        navigate('/dashboard', { replace: true });
+        if (auth.currentUser !== null && isAdmin(auth.currentUser)) {
+          navigate('/admin');
+        } else {
+          navigate('/dashboard', { replace: true });
+        }
       }
     } catch (err: any) {
       let errorMessage = 'Login failed. Please try again.';
@@ -132,4 +139,3 @@ const Login = () => {
 };
 
 export default Login;
-

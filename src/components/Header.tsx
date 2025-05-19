@@ -4,6 +4,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "@/firebaseConfig";
 import { logoutUser } from "../services/authService";
+import { isAdmin } from "../contexts/AuthContext";
+
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -12,6 +14,7 @@ const Header = () => {
   const [user] = useAuthState(auth);
   const location = useLocation();
   const navigate = useNavigate();
+
 
   const logout = async () => {
     await logoutUser();
@@ -41,7 +44,7 @@ const Header = () => {
 
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
+  }, [activeSection]);
 
   useEffect(() => {
     if (location.pathname !== '/') {
@@ -49,9 +52,26 @@ const Header = () => {
     }
   }, [location.pathname, location.hash]);
 
-  // useEffect(() => {
-  //   setIsMenuOpen(false);
-  // }, [location.pathname, location.hash]);
+  // Helper to handle anchor navigation for section links
+  const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, path: string) => {
+    if (path.startsWith('/#')) {
+      e.preventDefault();
+      const hash = path.split('#')[1];
+      if (location.pathname !== '/') {
+        navigate(`/${path.includes('#') ? '#' + hash : ''}`);
+        // Scroll will be handled by Index.tsx useEffect on mount
+      } else {
+        const el = document.getElementById(hash);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth' });
+        } else {
+          // fallback: update hash, Index.tsx will handle
+          window.location.hash = hash;
+        }
+      }
+      setIsMenuOpen(false);
+    }
+  };
 
   const navItems = [
     { name: 'Home', path: '/' },
@@ -78,6 +98,7 @@ const Header = () => {
               href={item.path}
               className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive(item.path) ? 'text-electric-blue font-semibold' : 'text-jet-black'
                 }`}
+              onClick={item.path.startsWith('/#') ? (e) => handleNavClick(e, item.path) : undefined}
             >
               {item.name}
             </a>
@@ -85,8 +106,8 @@ const Header = () => {
 
           {user ? (
             <>
-              <Link to="/dashboard" className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive('/dashboard') ? 'text-electric-blue font-semibold' : 'text-jet-black'}`}>
-                Dashboard
+              <Link to={isAdmin(user) ? '/admin' : '/dashboard'} className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive(isAdmin(user) ? '/admin' : '/dashboard') ? 'text-electric-blue font-semibold' : 'text-jet-black'}`}>
+                {isAdmin(user) ? 'Admin Dashboard' : 'Dashboard'}
               </Link>
               <Link to="/" onClick={logout} className="font-medium text-jet-black hover:text-electric-blue transition-colors duration-300">
                 Logout
@@ -98,23 +119,25 @@ const Header = () => {
             </Link>
           )}
 
-          {user ? (
-            <button
-              type="button"
-              onClick={() => navigate('/upload-photos')}
-              className="bg-electric-blue text-white px-4 py-2 rounded-md font-medium"
-            >
-              Start Repair
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => navigate('/login')}
-              className="bg-electric-blue text-white px-4 py-2 rounded-md font-medium"
-            >
-              Start Repair
-            </button>
-          )}
+          {/* {auth.currentUser && isAdmin(auth.currentUser) && (
+            <Link to="/admin" className="nav-link">
+              Admin Dashboard
+            </Link>
+          )} : {auth.currentUser && !isAdmin(auth.currentUser) && (
+            <Link to="/dashboard" className="nav-link">
+              Dashboard
+            </Link>
+          )} */}
+
+          <button
+            type="button"
+            onClick={() => navigate('/upload-photos')}
+            className="bg-electric-blue text-white px-4 py-2 rounded-md font-medium"
+          >
+            Start Repair
+          </button>
+
+
         </nav>
 
         <button className="md:hidden text-jet-black" onClick={() => setIsMenuOpen(!isMenuOpen)}>
@@ -130,20 +153,19 @@ const Header = () => {
                   href={item.path}
                   className={`font-medium hover:text-electric-blue transition-colors duration-300 py-2 ${isActive(item.path) ? 'text-electric-blue font-semibold' : 'text-jet-black'
                     }`}
-                  onClick={() => setIsMenuOpen(false)}
+                  onClick={item.path.startsWith('/#') ? (e) => handleNavClick(e, item.path) : () => setIsMenuOpen(false)}
                 >
                   {item.name}
                 </a>
               ))}
-              {user ? (
-                <>
-                  <Link to="/dashboard" className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive('/dashboard') ? 'text-electric-blue font-semibold' : 'text-jet-black'}`}>
-                    Dashboard
-                  </Link>
-                  <Link to="/" onClick={logout} className="font-medium text-jet-black hover:text-electric-blue transition-colors duration-300">
-                    Logout
-                  </Link>
-                </>
+              {auth.currentUser && !isAdmin(auth.currentUser) ? (
+                <Link to="/dashboard" className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive('/dashboard') ? 'text-electric-blue font-semibold' : 'text-jet-black'}`}>
+                  Dashboard
+                </Link>
+              ) : auth.currentUser && isAdmin(auth.currentUser) ? (
+                <Link to="/admin" className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive('/admin') ? 'text-electric-blue font-semibold' : 'text-jet-black'}`}>
+                  Admin Dashboardd
+                </Link>
               ) : (
                 <Link to="/login" className={`font-medium hover:text-electric-blue transition-colors duration-300 ${isActive('/login') ? 'text-electric-blue font-semibold' : 'text-jet-black'}`}>
                   Login

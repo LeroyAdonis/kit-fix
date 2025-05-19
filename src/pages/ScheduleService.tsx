@@ -5,7 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "@/firebaseConfig";
+import { db, auth } from "@/firebaseConfig";
 import { toast } from "sonner"; // Use sonner toast
 
 // Import types - Updated to use InitialMethod and FulfillmentMethod
@@ -16,6 +16,7 @@ import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"; // Import RadioGroup
 import { Label } from "@/components/ui/label";
+import { useAuthState } from "react-firebase-hooks/auth";
 
 /**
  * ScheduleService component handles the scheduling of repair services. It utilizes
@@ -47,7 +48,13 @@ const ScheduleService = () => {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const location = useLocation();
-    const orderId = searchParams.get("orderId") || (location as any).state?.orderId;;
+    const [user] = useAuthState(auth);
+    const orderId =
+        searchParams.get('orderId') ||
+        location.state?.orderId ||
+        (user
+            ? localStorage.getItem(`kitfix-${user.uid}-order-id`)
+            : localStorage.getItem('kitfix-guest-order-id'));
 
     const [pageLoading, setPageLoading] = useState(true); // Loading state for initial fetch
     const [isSaving, setIsSaving] = useState(false); // Loading state for form submission

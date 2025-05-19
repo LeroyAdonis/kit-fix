@@ -169,4 +169,9 @@ export const useAuth = () => {
     return context;
 };
 
+// ../services/authService.ts
+export const isAdmin = (user: User) => {
+    return user.email === 'admin@kitfix.co.za';
+}
+
 

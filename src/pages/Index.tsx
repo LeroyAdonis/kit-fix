@@ -9,15 +9,20 @@ import ContactForm from '@/components/ContactForm';
 import Footer from '@/components/Footer';
 
 const Index = () => {
-    // Smooth scroll to sections when URL contains a hash
+    // Smooth scroll to sections when URL contains a hash or when hash changes
     useEffect(() => {
-        if (window.location.hash) {
-            const id = window.location.hash.substring(1);
-            const element = document.getElementById(id);
-            if (element) {
-                element.scrollIntoView({ behavior: 'smooth' });
+        const handleHashChange = () => {
+            if (window.location.hash) {
+                const id = window.location.hash.substring(1);
+                const element = document.getElementById(id);
+                if (element) {
+                    element.scrollIntoView({ behavior: 'smooth' });
+                }
             }
-        }
+        };
+        handleHashChange(); // Run on mount
+        window.addEventListener('hashchange', handleHashChange);
+        return () => window.removeEventListener('hashchange', handleHashChange);
     }, []);
 
     return (

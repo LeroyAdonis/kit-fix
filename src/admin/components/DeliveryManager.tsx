@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/exhaustive-deps */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // src/admin/components/DeliveryManager.tsx
 import React, { useEffect, useState } from "react";
@@ -11,8 +10,7 @@ import {
     updateDoc,
     serverTimestamp,
     Timestamp,
-    getDoc, // Needed for update logic
-    // Import onSnapshot
+    getDoc,
     onSnapshot,
 } from "firebase/firestore";
 import { db } from "@/firebaseConfig";
@@ -21,62 +19,56 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Input } from "@/components/ui/input"; // For search
+import { Input } from "@/components/ui/input";
 import {
     Hash,
-    Truck, // Method icon
-    MapPin, // Location icon (for delivery address)
-    CalendarDays, // Date icon
-    Search, // Search icon
-    Loader2, // Loading spinner
-    ArrowRight, // Out for Delivery icon
-    CheckCircle, // Delivered icon
-    Tag, // Repair Type
-    Package, // Status icon
+    Truck,
+    MapPin,
+    CalendarDays,
+    Search,
+    Loader2,
+    ArrowRight,
+    CheckCircle,
+    Tag,
+    Package,
 } from "lucide-react";
 import { toast } from 'sonner';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // Import types
 import { Order, OrderStatus, FulfillmentMethod, RepairStatus } from "@/types/order";
 
 // Define filter status options for Delivery Manager (KitFix Delivers)
 const kitFixDeliveryStatuses: RepairStatus[] = [
-    "Ready for KitFix Delivery", // Initial status from RepairManager
-    "Scheduled for Delivery (KitFix)", // Optional scheduling step
-    "Out for Delivery", // Set by DeliveryManager
-    "Delivered to Customer", // Final status set by DeliveryManager
+    "Ready for KitFix Delivery",
+    "Scheduled for Delivery (KitFix)",
+    "Out for Delivery",
+    "Delivered to Customer",
 ];
 const relevantStatuses: RepairStatus[] = [...kitFixDeliveryStatuses];
 type DeliveryFilterStatus = RepairStatus | 'all';
 
-
 const DeliveryManager: React.FC = () => {
-    // --- ALL HOOKS MUST BE AT THE TOP LEVEL ---
     const [orders, setOrders] = useState<Order[]>([]);
     const [loading, setLoading] = useState(true);
-    // Corrected line: Added = useState()
-    const [filterStatus, setFilterStatus] = useState<DeliveryFilterStatus>('all'); // Default filter to 'all' or an initial state
-    const [searchTerm, setSearchTerm] = useState(''); // State for search term
+    const [filterStatus, setFilterStatus] = useState<DeliveryFilterStatus>('all');
+    const [searchTerm, setSearchTerm] = useState('');
     const [isUpdatingOrderId, setIsUpdatingOrderId] = useState<string | null>(null);
 
-    // Delivery statuses available for filtering (uses filterStatus type)
     const statusOptions: DeliveryFilterStatus[] = ['all', ...relevantStatuses];
 
     useEffect(() => {
-        setLoading(true); // Start loading when the effect runs
+        setLoading(true);
 
         const ordersRef = collection(db, "orders");
 
-        // Query for orders in 'awaiting_fulfillment' status, and fulfillmentMethod === 'delivery'
-        // AND repairStatus is relevant to this manager's view (client-side filter)
         const q = query(
             ordersRef,
             where('processing.status', '==', 'awaiting_fulfillment' as OrderStatus),
-            where('processing.fulfillmentMethod', '==', 'delivery' as FulfillmentMethod), // Fulfillment method is delivery
-            orderBy("createdAt", "desc") // Order by creation date
+            where('processing.fulfillmentMethod', '==', 'delivery' as FulfillmentMethod),
+            orderBy("createdAt", "desc")
         );
 
-        // Use onSnapshot for real-time updates
         const unsubscribe = onSnapshot(q, (snapshot) => {
             console.log("DeliveryManager: Received snapshot update.");
             const fetchedOrders = snapshot.docs.map((d) => {
@@ -90,47 +82,32 @@ const DeliveryManager: React.FC = () => {
                 };
             }) as Order[];
 
-            // DEBUG: Log fetched orders from Firestore
             console.log("DeliveryManager: Fetched orders from Firestore (awaiting_fulfillment, fulfillmentMethod=delivery):", fetchedOrders);
 
-
-            // Client-side filter to ensure they have a repair status relevant to this manager
-            // This filters down the fetched orders based on the specific repairStatus values this manager handles.
             const relevantOrders = fetchedOrders.filter(order =>
                 order.processing?.repairStatus && relevantStatuses.includes(order.processing.repairStatus)
             );
 
-            // DEBUG: Log orders after filtering by relevantStatuses
             console.log("DeliveryManager: Filtered orders by relevantStatuses:", relevantOrders);
 
-
-            setOrders(relevantOrders); // Set the state with relevant orders
-            setLoading(false); // Set loading to false AFTER receiving the first snapshot
+            setOrders(relevantOrders);
+            setLoading(false);
         }, (error) => {
             console.error("DeliveryManager: Error fetching real-time orders:", error);
             toast.error("Real-time updates failed for KitFix delivery orders.");
-            setLoading(false); // Ensure loading is off on error
+            setLoading(false);
         });
 
-        // Cleanup function: Unsubscribe when the component unmounts or the effect re-runs
         return () => {
             console.log("DeliveryManager: Unsubscribing from snapshot listener.");
             unsubscribe();
         };
+    }, [filterStatus]);
 
-        // Dependencies: Add dependencies that could change the query.
-        // The query depends on db. filterStatus and searchTerm affect client-side filtering,
-        // but they don't need to trigger a re-fetch from Firestore in this setup.
-    }, [filterStatus, db]); // Depend on filterStatus and db
-
-
-    // Generic update function
-    // Removed local state update logic to rely solely on onSnapshot
     const updateDeliveryOrder = async (orderId: string, updates: Partial<Order>): Promise<boolean> => {
-        setIsUpdatingOrderId(orderId); // Set updating state
+        setIsUpdatingOrderId(orderId);
         try {
             const orderRef = doc(db, "orders", orderId);
-            // Fetch existing is still useful for merging nested objects accurately before sending to Firestore
             const orderSnap = await getDoc(orderRef);
             const existingOrder = orderSnap.exists() ? orderSnap.data() as Order : null;
 
@@ -147,12 +124,10 @@ const DeliveryManager: React.FC = () => {
             const finalUpdates: Partial<Order> = {
                 ...updates,
                 processing: updatedProcessing,
-                updatedAt: serverTimestamp(), // Always update timestamp
+                updatedAt: serverTimestamp(),
             };
 
             await updateDoc(orderRef, finalUpdates);
-
-            // Rely on onSnapshot to update the 'orders' state
 
             console.log(`Order ${orderId} Firestore updated.`);
 
@@ -164,11 +139,10 @@ const DeliveryManager: React.FC = () => {
             });
             return false;
         } finally {
-            setIsUpdatingOrderId(null); // Reset updating state
+            setIsUpdatingOrderId(null);
         }
     };
 
-    // Action: Mark order as Scheduled for KitFix Delivery (Optional step)
     const markScheduledForKitFixDelivery = async (order: Order, scheduleDate: string) => {
         if (!order || !order.id || !order.processing) {
             toast.error("Action Failed", { description: "Order data is incomplete." });
@@ -183,7 +157,6 @@ const DeliveryManager: React.FC = () => {
             return;
         }
 
-        // Convert date string to Timestamp
         const date = new Date(scheduleDate);
         if (isNaN(date.getTime())) {
             toast.error("Invalid date selected.");
@@ -194,23 +167,19 @@ const DeliveryManager: React.FC = () => {
         const updates: Partial<Order> = {
             processing: {
                 ...order.processing,
-                repairStatus: "Scheduled for Delivery (KitFix)" as RepairStatus, // Update repair status
-                scheduledKitFixDeliveryDate: scheduledTimestamp, // Save scheduled date as Timestamp
-                // Keep main status as 'awaiting_fulfillment'
+                repairStatus: "Scheduled for Delivery (KitFix)" as RepairStatus,
+                scheduledKitFixDeliveryDate: scheduledTimestamp,
             },
         };
         const success = await updateDeliveryOrder(order.id, updates);
         if (success) toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} scheduled for KitFix delivery.`);
     };
 
-
-    // Action: Mark order as Out for Delivery
     const markOutForDelivery = async (order: Order) => {
         if (!order || !order.id || !order.processing) {
             toast.error("Action Failed", { description: "Order data is incomplete." });
             return;
         }
-        // Check if status is appropriate
         if (order.processing.fulfillmentMethod !== 'delivery' || order.processing.status !== 'awaiting_fulfillment' || (order.processing.repairStatus !== 'Ready for KitFix Delivery' && order.processing.repairStatus !== 'Scheduled for Delivery (KitFix)')) {
             toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} is not ready to go out for delivery.`);
             return;
@@ -220,26 +189,21 @@ const DeliveryManager: React.FC = () => {
             return;
         }
 
-
         const updates: Partial<Order> = {
             processing: {
                 ...order.processing,
-                repairStatus: "Out for Delivery" as RepairStatus, // Update repair status
-                // Maybe set out for delivery timestamp? outForDeliveryAt: Timestamp.now() // Add this timestamp field if needed
-                // Keep main status as 'awaiting_fulfillment'
+                repairStatus: "Out for Delivery" as RepairStatus,
             },
         };
         const success = await updateDeliveryOrder(order.id, updates);
         if (success) toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} marked as Out for Delivery.`);
     };
 
-    // Action: Mark order as Delivered to Customer
     const markDeliveredToCustomer = async (order: Order) => {
         if (!order || !order.id || !order.processing) {
             toast.error("Action Failed", { description: "Order data is incomplete." });
             return;
         }
-        // Check if status is appropriate for delivery
         if (order.processing.fulfillmentMethod !== 'delivery' || order.processing.status !== 'awaiting_fulfillment' || order.processing.repairStatus !== 'Out for Delivery') {
             toast.warning(`Order ${order.id.slice(0, 6).toUpperCase()} must be out for delivery to be marked delivered.`);
             return;
@@ -248,30 +212,22 @@ const DeliveryManager: React.FC = () => {
         const updates: Partial<Order> = {
             processing: {
                 ...order.processing,
-                status: "fulfilled" as OrderStatus, // CHANGE main status to fulfilled
-                repairStatus: "Delivered to Customer" as RepairStatus, // Set final status
-                actualKitFixDeliveryDate: Timestamp.now(), // Record actual delivery time
-                // Consider clearing fulfillment specific timestamps/locations?
-                // readyForFulfillmentAt: null // Set to null to remove or clear
+                status: "fulfilled" as OrderStatus,
+                repairStatus: "Delivered to Customer" as RepairStatus,
+                actualKitFixDeliveryDate: Timestamp.now(),
             },
         };
         const success = await updateDeliveryOrder(order.id, updates);
         if (success) toast.success(`Order ${order.id.slice(0, 6).toUpperCase()} marked as Delivered and Fulfilled.`);
     };
 
-
-    // --- Client-side Filtering and Searching ---
-    // Filter by selected RepairStatus and Search Term
     const filteredAndSearchedOrders = orders.filter(order => {
-        // Add safety check for processing and repairStatus
         if (!order.processing || !order.processing.repairStatus) return false;
 
-        // 1. Filter by Status
-        const statusMatch = filterStatus === 'all' || order.processing.repairStatus === filterStatus; // <-- filterStatus is used here
+        const statusMatch = filterStatus === 'all' || order.processing.repairStatus === filterStatus;
 
         if (!statusMatch) return false;
 
-        // 2. Filter by Search Term
         const lowerSearchTerm = searchTerm.toLowerCase();
         if (lowerSearchTerm === '') return true;
 
@@ -280,7 +236,6 @@ const DeliveryManager: React.FC = () => {
 
         return customerName.includes(lowerSearchTerm) || orderIdPartial.includes(lowerSearchTerm);
     });
-
 
     if (loading) {
         return (
@@ -292,35 +247,40 @@ const DeliveryManager: React.FC = () => {
         );
     }
 
-    // Add debugging log before mapping (after loading)
     console.log("DeliveryManager: Rendering Filtered Orders:", filteredAndSearchedOrders);
 
-
-    // Updated empty state message
     let emptyMessage = "No orders found.";
-    if (filterStatus !== 'all') { // <-- filterStatus is used here
+    if (filterStatus !== 'all') {
         emptyMessage = `No "${filterStatus.replace(/_/g, ' ')}" orders found.`;
     }
     if (searchTerm) {
-        emptyMessage = `No orders found matching "${searchTerm}"` + (filterStatus !== 'all' ? ` with status "${filterStatus.replace(/_/g, ' ')}".` : '.'); // <-- filterStatus is used here
+        emptyMessage = `No orders found matching "${searchTerm}"` + (filterStatus !== 'all' ? ` with status "${filterStatus.replace(/_/g, ' ')}".` : '.');
     }
-
 
     return (
         <div className="space-y-6">
             {/* Filter and Search Controls */}
             <div className="flex flex-col sm:flex-row justify-between gap-4 mb-6">
-                <div className="flex flex-wrap gap-3">
-                    {statusOptions.map(status => (
-                        <Button
-                            key={status}
-                            variant={filterStatus === status ? 'default' : 'outline'} // <-- filterStatus is used here
-                            onClick={() => setFilterStatus(status)} // <-- setFilterStatus is used here
-                            size="sm"
-                        >
-                            {status === 'all' ? 'All Delivery Orders' : status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                        </Button>
-                    ))}
+                {/* Status Filter Dropdown (mobile friendly) */}
+                <div className="w-full sm:w-auto">
+                    <Select value={filterStatus} onValueChange={v => setFilterStatus(v as DeliveryFilterStatus)}>
+                        <SelectTrigger className="w-full sm:w-[220px]">
+                            <SelectValue placeholder="All Delivery Orders">
+                                {filterStatus === 'all'
+                                    ? 'All Delivery Orders'
+                                    : filterStatus.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                            </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                            {statusOptions.map(status => (
+                                <SelectItem key={status} value={status}>
+                                    {status === 'all'
+                                        ? 'All Delivery Orders'
+                                        : status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                 </div>
                 {/* Search Input */}
                 <div className="relative w-full sm:w-auto sm:min-w-[200px]">
@@ -339,28 +299,24 @@ const DeliveryManager: React.FC = () => {
                 <p className="text-center text-gray-500">{emptyMessage}</p>
             ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {filteredAndSearchedOrders.map((order) => { // Corrected typo here
-                        // Add safety check inside the map loop
+                    {filteredAndSearchedOrders.map((order) => {
                         if (!order || !order.id || !order.processing) {
                             console.warn("Skipping rendering for invalid order item:", order);
                             return null;
                         }
 
-                        const repairStatus = order.processing.repairStatus; // Use repairStatus for actions
-                        const initialMethod = order.processing.initialMethod; // Get initial method for display
-                        const fulfillmentMethod = order.processing.fulfillmentMethod; // Get fulfillment method for display
-
+                        const repairStatus = order.processing.repairStatus;
+                        const initialMethod = order.processing.initialMethod;
+                        const fulfillmentMethod = order.processing.fulfillmentMethod;
 
                         return (
                             <Card key={order.id} className="rounded-2xl shadow-md">
                                 <CardContent className="p-6 space-y-3">
-                                    {/* Display relevant order info */}
                                     <div className="flex justify-between items-start">
                                         <div>
                                             <h3 className="text-lg font-semibold text-jet-black">{order.contactInfo?.name || "No Name"}</h3>
                                             <p className="text-sm text-gray-500">{order.contactInfo?.email || "No Email"}</p>
                                         </div>
-                                        {/* Display the current repairStatus */}
                                         <Badge
                                             variant="outline"
                                             className={`capitalize ${repairStatus === "Delivered to Customer"
@@ -369,7 +325,7 @@ const DeliveryManager: React.FC = () => {
                                                     ? "bg-blue-100 text-blue-600"
                                                     : repairStatus === "Scheduled for Delivery (KitFix)"
                                                         ? "bg-purple-100 text-purple-600"
-                                                        : "bg-gray-100 text-gray-600" // Default for Ready for KitFix Delivery
+                                                        : "bg-gray-100 text-gray-600"
                                                 }`}
                                         >
                                             {repairStatus || 'Unknown Status'}
@@ -383,7 +339,6 @@ const DeliveryManager: React.FC = () => {
                                         </span>
                                     </div>
 
-                                    {/* Order details */}
                                     <div className="text-sm text-gray-700 space-y-1">
                                         {initialMethod && (
                                             <p className="text-gray-700">
@@ -407,8 +362,7 @@ const DeliveryManager: React.FC = () => {
                                                 <strong>Notes:</strong> {order.notes}
                                             </p>
                                         )}
-                                        {/* Display Delivery Address - use contactInfo.address as intended */}
-                                        {order.contactInfo?.address && ( // Display contactInfo.address for KitFix Delivery
+                                        {order.contactInfo?.address && (
                                             <p className="text-gray-700">
                                                 <MapPin className="inline mr-1 h-4 w-4 text-red-500" />
                                                 <strong>Delivery Address:</strong> {order.contactInfo.address}
@@ -432,20 +386,16 @@ const DeliveryManager: React.FC = () => {
                                                 <strong>Delivered:</strong> {format(new Date(order.processing.actualKitFixDeliveryDate.seconds * 1000), 'dd MMM yyyy HH:mm')}
                                             </p>
                                         )}
-                                        {/* Add more relevant details like price, payment status if needed */}
                                     </div>
 
-                                    {/* --- Actions --- */}
-                                    <div className="mt-4 flex flex-wrap justify-end gap-2"> {/* Use flex-wrap */}
-                                        {/* Button/Input for Scheduling (Optional Step) */}
+                                    <div className="mt-4 flex flex-wrap justify-end gap-2">
                                         {repairStatus === 'Ready for KitFix Delivery' && (
                                             <>
-                                                {/* Could add a date/time picker input here */}
-                                                <Input type="date" className="w-auto sm:w-auto min-w-[120px]" onChange={(e) => { /* Handle date change */ console.log(e.target.value); }} /> {/* Placeholder Input */}
+                                                <Input type="date" className="w-auto sm:w-auto min-w-[120px]" onChange={(e) => { console.log(e.target.value); }} />
                                                 <Button
                                                     size="sm"
-                                                    variant="secondary"
-                                                    onClick={() => markScheduledForKitFixDelivery(order, '2023-10-27')} /* Replace '2023-10-27' with actual date from input */
+                                                    variant="luxury"
+                                                    onClick={() => markScheduledForKitFixDelivery(order, '2023-10-27')}
                                                     disabled={isUpdatingOrderId === order.id}
                                                 >
                                                     {isUpdatingOrderId === order.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -454,11 +404,10 @@ const DeliveryManager: React.FC = () => {
                                             </>
                                         )}
 
-                                        {/* Button to mark as Out for Delivery */}
                                         {(repairStatus === 'Ready for KitFix Delivery' || repairStatus === 'Scheduled for Delivery (KitFix)') && (
                                             <Button
                                                 size="sm"
-                                                variant="default" // Use default for primary action
+                                                variant="luxury"
                                                 onClick={() => markOutForDelivery(order)}
                                                 disabled={isUpdatingOrderId === order.id}
                                             >
@@ -467,11 +416,10 @@ const DeliveryManager: React.FC = () => {
                                             </Button>
                                         )}
 
-                                        {/* Button to mark as Delivered */}
                                         {repairStatus === 'Out for Delivery' && (
                                             <Button
                                                 size="sm"
-                                                variant="default"
+                                                variant="luxury"
                                                 onClick={() => markDeliveredToCustomer(order)}
                                                 disabled={isUpdatingOrderId === order.id}
                                             >
@@ -480,13 +428,9 @@ const DeliveryManager: React.FC = () => {
                                             </Button>
                                         )}
 
-
-                                        {/* Message if delivered */}
                                         {repairStatus === 'Delivered to Customer' && (
                                             <Badge variant="default" className="capitalize">Delivered</Badge>
                                         )}
-
-                                        {/* Maybe a View Details button similar to OrdersTable (Optional) */}
                                     </div>
                                 </CardContent>
                             </Card>

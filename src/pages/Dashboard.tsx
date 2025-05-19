@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthState } from 'react-firebase-hooks/auth';
-import { doc, getDoc, collection, query, where, deleteDoc, orderBy, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, deleteDoc, orderBy, Timestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '@/firebaseConfig';
 import { logoutUser } from '@/services/authService'; // Assuming this exists
 import { Button } from '@/components/ui/button';
@@ -431,6 +431,43 @@ const Dashboard = () => {
         if (user || !loadingAuth) {
             fetchData();
         }
+
+        // --- GUEST TO USER ORDER LINKING LOGIC ---
+        // If user just logged in or registered, check for guest orders in localStorage and link them
+        const linkGuestOrdersToUser = async () => {
+            if (!user) return;
+            // Check for guest order keys
+            const guestOrderId = localStorage.getItem('kitfix-guest-order-id');
+            if (guestOrderId) {
+                try {
+                    // Fetch the guest order from Firestore
+                    const guestOrderRef = doc(db, 'orders', guestOrderId);
+                    const guestOrderSnap = await getDoc(guestOrderRef);
+                    if (guestOrderSnap.exists()) {
+                        const guestOrder = guestOrderSnap.data();
+                        // Only update if userId is not set or is null
+                        if (!guestOrder.userId) {
+                            // Update the order to set userId and contactInfo
+                            await updateDoc(guestOrderRef, {
+                                userId: user.uid,
+                                'contactInfo.name': user.displayName || guestOrder.contactInfo?.name || '',
+                                'contactInfo.email': user.email || guestOrder.contactInfo?.email || '',
+                            });
+                        }
+                    }
+                    // Remove guest localStorage keys after linking
+                    localStorage.removeItem('kitfix-guest-order-id');
+                    localStorage.removeItem('kitfix-guest-quote-photos');
+                    localStorage.removeItem('kitfix-guest-quote-repairType');
+                    localStorage.removeItem('kitfix-guest-quote-notes');
+                    localStorage.removeItem('kitfix-guest-schedule-data');
+                } catch (err) {
+                    console.error('Error linking guest order to user:', err);
+                }
+            }
+            // Optionally, migrate any other guest data (e.g., multiple guest orders)
+        };
+        linkGuestOrdersToUser();
 
         // Cleanup on unmount
         return () => {

@@ -68,13 +68,20 @@ const GetQuote = () => {
     const navigate = useNavigate();
 
     // Get orderId from params, state, or localStorage
-    const orderId = searchParams.get('orderId') || location.state?.orderId || (user ? localStorage.getItem(`kitfix-${user.uid}-order-id`) : undefined);
+    const orderId =
+        searchParams.get('orderId') ||
+        location.state?.orderId ||
+        (user
+            ? localStorage.getItem(`kitfix-${user.uid}-order-id`)
+            : localStorage.getItem('kitfix-guest-order-id'));
 
 
     // Local state for form values, populated from localStorage or fetched data
     const [photos, setPhotos] = useState<string[]>(() => {
-        const stored = user ? localStorage.getItem(`kitfix-${user.uid}-quote-photos`) : null;
-        return stored ? JSON.parse(stored) : (location.state?.photos || []); // Also check location state
+        const stored = user
+            ? localStorage.getItem(`kitfix-${user.uid}-quote-photos`)
+            : localStorage.getItem('kitfix-guest-quote-photos');
+        return stored ? JSON.parse(stored) : (location.state?.photos || []);
     });
 
 
@@ -165,11 +172,18 @@ const GetQuote = () => {
 
     // Effects to save state to localStorage whenever it changes
     useEffect(() => {
-        if (user && orderId) { // Only save if user is logged in AND we have an orderId
-            localStorage.setItem(`kitfix-${user.uid}-order-id`, orderId);
-            localStorage.setItem(`kitfix-${user.uid}-quote-photos`, JSON.stringify(photos));
-            localStorage.setItem(`kitfix-${user.uid}-quote-repairType`, selectedOption);
-            localStorage.setItem(`kitfix-${user.uid}-quote-notes`, additionalNotes);
+        if (orderId) {
+            if (user) {
+                localStorage.setItem(`kitfix-${user.uid}-order-id`, orderId);
+                localStorage.setItem(`kitfix-${user.uid}-quote-photos`, JSON.stringify(photos));
+                localStorage.setItem(`kitfix-${user.uid}-quote-repairType`, selectedOption);
+                localStorage.setItem(`kitfix-${user.uid}-quote-notes`, additionalNotes);
+            } else {
+                localStorage.setItem('kitfix-guest-order-id', orderId);
+                localStorage.setItem('kitfix-guest-quote-photos', JSON.stringify(photos));
+                localStorage.setItem('kitfix-guest-quote-repairType', selectedOption);
+                localStorage.setItem('kitfix-guest-quote-notes', additionalNotes);
+            }
         }
     }, [user, orderId, photos, selectedOption, additionalNotes]);
 
